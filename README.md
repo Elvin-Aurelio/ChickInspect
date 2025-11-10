@@ -86,7 +86,7 @@ ChikInspect/
    ```bash
    git clone https://github.com/<your-username>/ChikInspect.git
    cd ChikInspect
-```
+   ```
 
 2. **Install dependencies**
 
@@ -192,8 +192,7 @@ Recommended Actions:
 - Consult veterinarian for anticoccidial treatment.
 ```
 
-![example\_chart](docs/example_bar_chart.png)
-*(Example: probability per class visualization in Streamlit)*
+
 
 ---
 
