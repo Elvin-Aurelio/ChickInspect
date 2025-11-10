@@ -1,4 +1,4 @@
-5# 🐔 ChikInspect: Poultry Disease Detection using Deep Learning
+# 🐔 ChikInspect: Poultry Disease Detection using Deep Learning
 
 ### *AI-powered image classification for early detection of poultry diseases through fecal analysis.*
 
