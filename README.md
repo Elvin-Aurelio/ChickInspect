@@ -1,4 +1,4 @@
-# 🐔 ChikInspect: Poultry Disease Detection using Deep Learning
+5# 🐔 ChikInspect: Poultry Disease Detection using Deep Learning
 
 ### *AI-powered image classification for early detection of poultry diseases through fecal analysis.*
 
@@ -224,4 +224,4 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 > *ChikInspect combines deep learning and social impact — empowering smallholder farmers with affordable, data-driven tools for poultry health and food security.*
 
-```
+
