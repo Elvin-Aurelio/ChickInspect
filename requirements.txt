@@ -4,3 +4,4 @@ pillow
 numpy
 roboflow
 inference-sdk==0.9.17
+opencv-python-headless
