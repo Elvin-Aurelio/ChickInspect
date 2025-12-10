@@ -4,6 +4,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 from inference_sdk import InferenceHTTPClient
 import io
+import os
+import tempfile
 
 # ==========================================
 # 1. KONFIGURASI HALAMAN & CONSTANT
@@ -51,11 +53,20 @@ def run_roboflow_detection(image_bytes):
     )
 
     try:
+        # 1. Simpan file sementara ke disk
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp.write(image_bytes)
+            tmp_path = tmp.name
+
+        # 2. Kirim PATH file ke Roboflow
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": image_bytes}   # BYTES, BUKAN PIL
+            images={"image": tmp_path}   # ✅ PATH, BUKAN BYTES/PIL
         )
+
+        # 3. Hapus file sementara
+        os.remove(tmp_path)
 
         if resp and len(resp) > 0:
             return resp[0].get('predictions', [])
@@ -65,8 +76,6 @@ def run_roboflow_detection(image_bytes):
         return []
 
     return []
-
-
 
 
 # ==========================================
