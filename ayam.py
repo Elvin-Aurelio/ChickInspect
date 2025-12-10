@@ -40,6 +40,7 @@ model = load_classifier_model()
 # ==========================================
 # 3. FUNGSI DETEKSI (JALUR STABIL - CLIENT.INFER)
 # ==========================================
+
 def run_roboflow_detection(image_bytes):
     try:
         api_key = st.secrets["roboflow_api_key"]
@@ -53,23 +54,25 @@ def run_roboflow_detection(image_bytes):
     )
 
     try:
-        # 1. Simpan file sementara ke disk
+        # 1. Simpan file sementara
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
             tmp.write(image_bytes)
             tmp_path = tmp.name
 
-        # 2. Kirim PATH file ke Roboflow
+        # 2. KIRIM DENGAN FORMAT LIST of DICT ✅
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": tmp_path}   # ✅ PATH, BUKAN BYTES/PIL
+            images=[                     # ✅ HARUS LIST
+                {"image": tmp_path}     # ✅ TIAP ITEM DICT
+            ]
         )
 
         # 3. Hapus file sementara
         os.remove(tmp_path)
 
         if resp and len(resp) > 0:
-            return resp[0].get('predictions', [])
+            return resp[0].get("predictions", [])
 
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
