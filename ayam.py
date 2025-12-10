@@ -36,34 +36,32 @@ def load_classifier_model():
 model = load_classifier_model()
 
 # ==========================================
-# 3. FUNGSI DETEKSI (ROBOFLOW) - PERBAIKAN
+# 3. FUNGSI DETEKSI (JALUR STABIL - CLIENT.INFER)
 # ==========================================
 def run_roboflow_detection(image_bytes):
-    """Mengirim gambar ke Roboflow Workflow API."""
+    """Mengirim gambar ke Roboflow Direct Inference API."""
     try:
         api_key = st.secrets["roboflow_api_key"]
     except:
         st.warning("API Key belum disetting di secrets.toml.")
         return []
 
+    # Gunakan detect.roboflow.com (Jalur Stabil)
     client = InferenceHTTPClient(
-        api_url="https://serverless.roboflow.com"   ,
+        api_url="https://detect.roboflow.com",
         api_key=api_key
     )
 
     image = Image.open(io.BytesIO(image_bytes))
 
     try:
-        resp = client.run_workflow(
-            workspace_name="elvin-3wtt1",
-            workflow_id="find-feses-3",
-            images={"image": image},
-            #use_cache=True 
-        )
+        # PENTING: Ganti 'find-feses-3/1' dengan versi model Anda.
+        # Angka '1' adalah versi. Jika Anda sudah train ulang jadi v2, ganti jadi 'find-feses-3/2'
+        resp = client.infer(image, model_id="find-feses-3-9hvtv/1")
         
-        if resp and len(resp) > 0:
-            # Sesuaikan key output json workflow Anda
-            return resp[0].get('predictions', [])
+        # Jalur ini mengembalikan dictionary yang rapi, tidak akan error 'list object...'
+        if resp and 'predictions' in resp:
+            return resp['predictions']
             
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
