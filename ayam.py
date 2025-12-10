@@ -47,18 +47,18 @@ def run_roboflow_detection(image_bytes):
         return []
 
     client = InferenceHTTPClient(
-        api_url="https://detect.roboflow.com",
+        api_url="https://serverless.roboflow.com"   ,
         api_key=api_key
     )
 
     image = Image.open(io.BytesIO(image_bytes))
 
     try:
-        # HAPUS 'use_cache=True' DI SINI
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": image} 
+            images={"image": image},
+            use_cache=True 
         )
         
         if resp and len(resp) > 0:
