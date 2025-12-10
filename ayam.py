@@ -1,168 +1,265 @@
 import streamlit as st
 import tensorflow as tf
 import numpy as np
-from PIL import Image
-import os
-import pandas as pd
+from PIL import Image, ImageDraw, ImageFont
+from inference_sdk import InferenceHTTPClient
+import io
 
-# ======== CONFIGURATIONS ========
-st.set_page_config(page_title="ChikInspect", layout="centered")
+# ==========================================
+# 1. KONFIGURASI HALAMAN & CONSTANT
+# ==========================================
+st.set_page_config(
+    page_title="ChikInspect - AI Diagnosis",
+    page_icon="🐔",
+    layout="centered"
+)
 
-st.title("🐔 ChikInspect - Poultry Health Detection")
-st.caption("AI-powered fecal image analysis for early detection of poultry diseases")
+# Sesuaikan dengan nama file model Anda
+MODEL_PATH = 'chikinspect_model_cropped_final.keras' 
 
-# ======== LOAD MODEL ========
-@st.cache_resource
-def load_model():
-    model_path = os.path.join(os.path.dirname(__file__), "chikinspect_model_A.keras")
-    st.write(f"📂 Loading model from: `{model_path}`")  # opsional (boleh dihapus setelah testing)
-    model = tf.keras.models.load_model(model_path)
-    return model
-
-model = load_model()
+# Sesuaikan urutan kelas ini dengan urutan folder saat training (Abjad)
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
-IMG_SIZE = 224
 
-# ======== FILE UPLOAD ========
-uploaded_file = st.file_uploader("Upload fecal image (JPG/PNG)", type=["jpg", "jpeg", "png"])
+# ==========================================
+# 2. FUNGSI LOADING MODEL (CACHED)
+# ==========================================
+@st.cache_resource
+def load_classifier_model():
+    """Load model Keras sekali saja agar hemat memori."""
+    try:
+        model = tf.keras.models.load_model(MODEL_PATH)
+        return model
+    except Exception as e:
+        st.error(f"Gagal memuat model klasifikasi: {e}")
+        return None
+
+model = load_classifier_model()
+
+# ==========================================
+# 3. FUNGSI DETEKSI (ROBOFLOW)
+# ==========================================
+def run_roboflow_detection(image_bytes):
+    """Mengirim gambar ke Roboflow Workflow API."""
+    # Ambil API Key dari st.secrets (atau bisa hardcode untuk testing, tapi tidak disarankan)
+    try:
+        api_key = st.secrets["roboflow_api_key"]
+    except:
+        st.warning("API Key belum disetting di secrets.toml. Menggunakan placeholder.")
+        return []
+
+    client = InferenceHTTPClient(
+        api_url="https://detect.roboflow.com", # URL standar inferensi
+        api_key=api_key
+    )
+
+    # Konversi bytes ke PIL Image
+    image = Image.open(io.BytesIO(image_bytes))
+
+    try:
+        # Menjalankan Workflow sesuai snippet Anda
+        # Note: Pastikan workspace_name dan workflow_id benar
+        resp = client.run_workflow(
+            workspace_name="elvin-3wtt1",
+            workflow_id="find-feses-3",
+            images={"image": image},
+            use_cache=True
+        )
+        
+        # Mengambil hasil prediksi dari struktur JSON workflow
+        # Biasanya output ada di index 0 jika workflow standard
+        if resp and len(resp) > 0:
+            # Sesuaikan key ini dengan output spesifik workflow Anda
+            # Seringkali workflow mengembalikan dict dengan key 'predictions' atau langsung list
+            # Di sini saya asumsi strukturnya mirip standard object detection
+            return resp[0].get('predictions', []) # Mengambil list 'predictions'
+            
+    except Exception as e:
+        st.error(f"Error Roboflow: {e}")
+        return []
+    
+    return []
+
+# ==========================================
+# 4. FUNGSI UTILITY (CROP & DRAW)
+# ==========================================
+def draw_bounding_boxes(image, predictions):
+    """Menggambar kotak di sekitar objek yang terdeteksi."""
+    img_draw = image.copy()
+    draw = ImageDraw.Draw(img_draw)
+    
+    # Coba load font, kalau tidak ada pakai default
+    try:
+        font = ImageFont.truetype("arial.ttf", 20)
+    except:
+        font = ImageFont.load_default()
+
+    for pred in predictions:
+        # Konversi Center-XY (Roboflow) ke Corner-XY (PIL)
+        # JSON: x, y adalah titik tengah. width, height adalah ukuran.
+        x_center, y_center = pred['x'], pred['y']
+        w, h = pred['width'], pred['height']
+        
+        x_min = x_center - (w / 2)
+        y_min = y_center - (h / 2)
+        x_max = x_center + (w / 2)
+        y_max = y_center + (h / 2)
+
+        # Gambar Kotak
+        draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
+        
+        # Tulis Label Confidence Deteksi
+        text = f"Feses: {pred['confidence']:.2f}"
+        
+        # Hitung posisi text background agar rapi
+        # bbox return (left, top, right, bottom)
+        text_bbox = draw.textbbox((x_min, y_min), text, font=font)
+        draw.rectangle((text_bbox[0], text_bbox[1]-5, text_bbox[2], text_bbox[3]+5), fill="red")
+        draw.text((x_min, y_min-5), text, fill="white", font=font)
+
+    return img_draw
+
+def predict_crop(crop_img, model):
+    """Melakukan prediksi penyakit pada satu potongan gambar."""
+    # Resize ke 224x224 sesuai input MobileNetV2
+    img = crop_img.resize((224, 224))
+    
+    # Konversi ke array numpy
+    img_array = np.array(img)
+    
+    # Karena preprocessing (preprocess_input) SUDAH ADA di dalam model (layer),
+    # kita tidak perlu normalisasi manual di sini. Cukup expand dims.
+    img_array = np.expand_dims(img_array, axis=0) 
+    
+    predictions = model.predict(img_array)
+    score = tf.nn.softmax(predictions[0]) # Opsional, biasanya output dense sdh softmax
+    
+    class_idx = np.argmax(predictions[0])
+    confidence = np.max(predictions[0])
+    
+    return CLASS_NAMES[class_idx], confidence
+
+# ==========================================
+# 5. UI UTAMA (STREAMLIT)
+# ==========================================
+st.title("🐔 ChikInspect AI")
+st.markdown("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
+
+uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    image = Image.open(uploaded_file).convert("RGB")
-    st.image(image, caption="Uploaded Image", use_column_width=True)
+    # 1. Tampilkan Gambar Asli
+    image_bytes = uploaded_file.getvalue()
+    original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    
+    col1, col2 = st.columns(2)
+    with col1:
+        st.image(original_image, caption="Gambar Asli", use_column_width=True)
 
-    # ======== PREPROCESS (NO preprocess_input, NO division) ========
-    img_resized = image.resize((IMG_SIZE, IMG_SIZE))
-    img_array = np.array(img_resized).astype('float32')  # raw pixel scale (0–255)
-    img_batch = np.expand_dims(img_array, axis=0)
+    if st.button("🔍 Deteksi Penyakit"):
+        with st.spinner('Sedang memindai objek feses (Roboflow)...'):
+            # 2. Deteksi Objek
+            predictions = run_roboflow_detection(image_bytes)
 
-    # ======== PREDICT ========
-    with st.spinner("Analyzing image..."):
-        predictions = model.predict(img_batch)[0]
-        predicted_index = np.argmax(predictions)
-        predicted_class = CLASS_NAMES[predicted_index]
-        confidence = predictions[predicted_index] * 100
+        if not predictions:
+            st.warning("⚠️ Tidak ada objek feses yang terdeteksi. Coba ambil foto lebih dekat.")
+        else:
+            # Visualisasi Bounding Box
+            bbox_image = draw_bounding_boxes(original_image, predictions)
+            with col2:
+                st.image(bbox_image, caption=f"Terdeteksi {len(predictions)} Objek", use_column_width=True)
+            
+            # --- PROSES KLASIFIKASI PER OBJEK ---
 
-    # ======== OUTPUT ========
-    st.success(f"Prediction: **{predicted_class}** ({confidence:.2f}% confidence)")
+            st.divider()
+            st.subheader("🔬 Hasil Analisis Laboratorium AI")
+            
+            results = []
+            
+            # Progress bar
+            progress_bar = st.progress(0)
+            
+            # Filter: HANYA proses jika Roboflow yakin itu feses minimal 50% (0.5)
+            # Ini menyaring batu/jerami yang "agak mirip" feses
+            MIN_DETECTION_CONFIDENCE = 0.5 
+            
+            valid_predictions = [p for p in predictions if p['confidence'] >= MIN_DETECTION_CONFIDENCE]
 
-    st.markdown("### Probability per class:")
-    for name, prob in zip(CLASS_NAMES, predictions):
-        st.write(f"- **{name}**: {prob*100:.2f}%")
+            if not valid_predictions:
+                st.warning("⚠️ Objek terdeteksi, namun tingkat keyakinannya terlalu rendah (kemungkinan bukan feses). Mohon foto ulang.")
+            else:
+                for i, pred in enumerate(valid_predictions):
+                    # Crop logic
+                    x_center, y_center = pred['x'], pred['y']
+                    w, h = pred['width'], pred['height']
+                    
+                    left = x_center - (w / 2)
+                    top = y_center - (h / 2)
+                    right = x_center + (w / 2)
+                    bottom = y_center + (h / 2)
+                    
+                    # Crop gambar
+                    crop_img = original_image.crop((left, top, right, bottom))
+                    
+                    # Prediksi Penyakit
+                    label, disease_conf = predict_crop(crop_img, model)
+                    bbox_conf = pred['confidence']
+                    
+                    # --- LOGIKA BARU: COMPOSITE SCORE ---
+                    # Kita kalikan keyakinan Roboflow x Keyakinan MobileNet
+                    final_score = bbox_conf * disease_conf
+                    
+                    results.append({
+                        "id": i+1,
+                        "bbox_conf": bbox_conf,       # Yakin ini feses?
+                        "disease": label,
+                        "disease_conf": disease_conf, # Yakin ini penyakit X?
+                        "final_score": final_score,   # Skor Akhir (Perkalian)
+                        "img": crop_img
+                    })
+                    progress_bar.progress((i + 1) / len(valid_predictions))
+                
+                progress_bar.empty()
 
-    # ======== BAR CHART ========
-    chart_data = pd.DataFrame({
-        "Class": [name for name in CLASS_NAMES],
-        "Probability (%)": [p * 100 for p in predictions]
-    })
-    st.bar_chart(chart_data, x="Class", y="Probability (%)")
+                # --- TAMPILKAN HASIL INDIVIDUAL ---
+                cols = st.columns(min(len(results), 3))
+                for idx, res in enumerate(results):
+                    with cols[idx % 3]:
+                        st.image(res['img'], caption=f"Objek #{res['id']}")
+                        # Tampilkan detail skor agar user paham
+                        st.markdown(f"**{res['disease']}**")
+                        st.caption(f"YOLO: {res['bbox_conf']:.2f} | Model: {res['disease_conf']:.2f}")
+                        st.caption(f"**Score: {res['final_score']:.3f}**")
 
+                # --- KESIMPULAN BERDASARKAN FINAL SCORE TERTINGGI ---
+                st.divider()
+                
+                # Cari prediksi dengan FINAL SCORE tertinggi (bukan cuma disease conf)
+                best_pred = max(results, key=lambda x: x['final_score'])
+                
+                st.success(f"### ✅ Kesimpulan Diagnosa: {best_pred['disease']}")
+                st.markdown(f"""
+                Sistem memilih hasil ini karena memiliki kombinasi keyakinan tertinggi:
+                - Tingkat keyakinan objek feses: **{best_pred['bbox_conf']*100:.1f}%**
+                - Tingkat kecocokan gejala penyakit: **{best_pred['disease_conf']*100:.1f}%**
+                """)
+                
+                # Rekomendasi Penanganan
+                with st.expander("ℹ️ Rekomendasi Penanganan Awal"):
+                    if best_pred['disease'] == 'Coccidiosis':
+                        st.write("- 🔴 **Urgent:** Pisahkan ayam yang sakit segera.")
+                        st.write("- Berikan obat anticoccidial (seperti Amprolium).")
+                        st.write("- Jaga kekeringan kandang, ganti sekam yang basah.")
+                    elif best_pred['disease'] == 'New Castle Disease':
+                        st.error("💀 **BAHAYA TINGGI!** Segera lapor dokter hewan/dinas setempat.")
+                        st.write("- Isolasi total area kandang.")
+                        st.write("- Vaksinasi darurat untuk ayam yang masih sehat.")
+                    elif best_pred['disease'] == 'Salmonella':
+                        st.write("- Berikan antibiotik spektrum luas sesuai resep vet.")
+                        st.write("- Cek kualitas air minum & sanitasi tempat pakan.")
+                    else: # Healthy
+                        st.write("- ✅ Kondisi pencernaan ayam tampak normal.")
+                        st.write("- Lanjutkan program pakan dan vitamin rutin.")
 
-    # ======== RECOMMENDATION LOGIC ========
-def get_urgency(prob):
-    if prob >= 0.70:
-        return "HIGH"
-    elif prob >= 0.40:
-        return "MEDIUM"
-    else:
-        return "LOW"
-
-def get_recommendation(pred_class, prob):
-    urgency = get_urgency(prob)
-    rec = {"title": pred_class, "urgency": urgency, "actions": [], "notes": []}
-
-    if pred_class.lower().startswith("coccid"):
-        rec["actions"] = [
-            "Isolate suspected birds immediately.",
-            "Remove and replace litter; disinfect the coop.",
-            "Provide supportive care (electrolytes, warmth).",
-            "Consult veterinarian for anticoccidial treatment or prescription."
-        ]
-        rec["notes"] = [
-            "Coccidiosis often related to poor hygiene and contaminated feed/water.",
-            "Consider reviewing litter management and vaccination program."
-        ]
-
-    elif pred_class.lower().startswith("healthy"):
-        rec["actions"] = [
-            "Continue routine monitoring (check feces, feed intake, behaviour).",
-            "Record this result in farm log."
-        ]
-        rec["notes"] = [
-            "No immediate action required, but maintain good biosecurity and nutrition."
-        ]
-
-    elif "new" in pred_class.lower() or "nd" in pred_class.lower():
-        rec["actions"] = [
-            "Strictly isolate the affected flock/house.",
-            "Stop movement of birds, products, and equipment.",
-            "Contact local veterinarian and report to livestock authority if required.",
-            "Implement urgent biosecurity: disinfect boots, equipment, restrict access."
-        ]
-        rec["notes"] = [
-            "Newcastle Disease can be highly contagious and cause high mortality.",
-            "Follow vet guidance for culling or targeted treatment if recommended."
-        ]
-
-    elif "salmonella" in pred_class.lower():
-        rec["actions"] = [
-            "Isolate suspected birds and practice strict hygiene.",
-            "Avoid handling eggs/meat without protection—Salmonella is zoonotic.",
-            "Consult veterinarian for testing and possible antibiotic or management plan."
-        ]
-        rec["notes"] = [
-            "Investigate feed and water sources, and sanitize feeding equipment.",
-            "Cook or handle animal products safely to prevent spread to humans."
-        ]
-
-    # Tailor urgency-specific prompt
-    if rec["urgency"] == "HIGH":
-        rec["priority_note"] = "URGENT: Contact a veterinarian immediately and restrict movements."
-    elif rec["urgency"] == "MEDIUM":
-        rec["priority_note"] = "Monitor closely and prepare to escalate (collect samples, contact vet)."
-    else:
-        rec["priority_note"] = "Low urgency: continue routine monitoring."
-
-    return rec
-
-# usage (after predictions computed)
-top_prob = float(predictions[predicted_index])
-recommendation = get_recommendation(predicted_class, top_prob)
-
-st.markdown("## Recommendation")
-st.write(f"**Detected:** {recommendation['title']}")
-st.write(f"**Urgency level:** {recommendation['urgency']}")
-st.info(recommendation['priority_note'])
-
-st.markdown("### Recommended Actions")
-for a in recommendation['actions']:
-    st.write(f"- {a}")
-
-if recommendation.get("notes"):
-    st.markdown("### Notes / Context")
-    for n in recommendation['notes']:
-        st.write(f"- {n}")
-st.markdown("---")
-st.caption("⚠️ Disclaimer: This tool provides AI-based analysis and recommendations. Always consult a qualified veterinarian for definitive diagnosis and treatment.")
-# Optional: Save recommendation + prediction to local CSV
-if st.button("Save result & recommendation"):
-    import json, datetime, csv
-    fname = "history_results.csv"
-    row = {
-        "time": datetime.datetime.utcnow().isoformat(),
-        "filename": uploaded_file.name if uploaded_file is not None else "",
-        "predicted_class": recommendation['title'],
-        "probability": top_prob,
-        "urgency": recommendation['urgency'],
-        "actions": "; ".join(recommendation['actions'])
-    }
-    # write header if new
-    write_header = not os.path.exists(fname)
-    with open(fname, "a", newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=list(row.keys()))
-        if write_header:
-            writer.writeheader()
-        writer.writerow(row)
-    st.success(f"Saved to {fname}")
-
-else:
-    st.info("Please upload a chicken feces image to start the analysis.")
+# Placeholder untuk Chatbot (Next Step)
+if st.checkbox("💬 Konsultasi dengan Dokter AI"):
+   st.info("Fitur chatbot akan segera hadir!")

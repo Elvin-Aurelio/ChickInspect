@@ -1,0 +1,31 @@
+# --- Keamanan (Wajib) ---
+secrets.toml
+.env
+api_keys.py
+
+# --- Python Cache (Sampah) ---
+__pycache__/
+*.py[cod]
+*$py.class
+
+# --- Dataset (Biasanya terlalu besar untuk GitHub) ---
+# Anda tidak perlu upload ribuan gambar ayam ke GitHub
+dataset_local/
+dataset_cropped/
+data.zip
+/content/
+
+# --- Model (Opsional) ---
+# GitHub menolak file > 100MB.
+# Jika model .keras Anda > 100MB, hapus tanda pagar di bawah ini:
+# *.keras
+# *.h5
+
+# --- Log & Hasil Output ---
+hasil YOLO/
+output_crops/
+*.csv
+!bbox_features.csv  # Kecuali csv fitur (boleh diupload jika ukurannya kecil)
+
+# --- MacOS Metadata (Jika pakai Mac) ---
+.DS_Store
