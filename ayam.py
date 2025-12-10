@@ -53,32 +53,49 @@ def run_roboflow_detection(image_bytes):
         api_key=api_key
     )
 
+    tmp_path = None
+
     try:
-        # 1. Simpan file sementara
+        # === 1. Simpan image ke file sementara ===
         with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
             tmp.write(image_bytes)
             tmp_path = tmp.name
 
-        # 2. KIRIM DENGAN FORMAT LIST of DICT ✅
-        resp = client.run_workflow(
-            workspace_name="elvin-3wtt1",
-            workflow_id="find-feses-3",
-            images=[                     # ✅ HARUS LIST
-                {"image": tmp_path}     # ✅ TIAP ITEM DICT
-            ]
-        )
+        # === 2. COBA FORMAT BARU (SESUAI COLAB) ===
+        try:
+            resp = client.run_workflow(
+                workspace_name="elvin-3wtt1",
+                workflow_id="find-feses-3",
+                images={
+                    "image": tmp_path   # ✅ FORMAT BARU
+                }
+            )
 
-        # 3. Hapus file sementara
-        os.remove(tmp_path)
+        # === 3. JIKA FORMAT BARU GAGAL → FALLBACK KE FORMAT LAMA ===
+        except Exception:
+            resp = client.run_workflow(
+                workspace_name="elvin-3wtt1",
+                workflow_id="find-feses-3",
+                images=[
+                    {"image": tmp_path}  # ✅ FORMAT LAMA
+                ]
+            )
 
-        if resp and len(resp) > 0:
-            return resp[0].get("predictions", [])
+        # === 4. AMBIL OUTPUT DENGAN AMAN ===
+        if resp and isinstance(resp, list) and len(resp) > 0:
+            if isinstance(resp[0], dict):
+                return resp[0].get("predictions", [])
+
+        return []
 
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
         return []
 
-    return []
+    finally:
+        # === 5. BERSIHKAN FILE SEMENTARA ===
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
 
 
 # ==========================================
