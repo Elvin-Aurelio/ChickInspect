@@ -36,42 +36,34 @@ def load_classifier_model():
 model = load_classifier_model()
 
 # ==========================================
-# 3. FUNGSI DETEKSI (ROBOFLOW)
+# 3. FUNGSI DETEKSI (ROBOFLOW) - PERBAIKAN
 # ==========================================
 def run_roboflow_detection(image_bytes):
     """Mengirim gambar ke Roboflow Workflow API."""
-    # Ambil API Key dari st.secrets (atau bisa hardcode untuk testing, tapi tidak disarankan)
     try:
         api_key = st.secrets["roboflow_api_key"]
     except:
-        st.warning("API Key belum disetting di secrets.toml. Menggunakan placeholder.")
+        st.warning("API Key belum disetting di secrets.toml.")
         return []
 
     client = InferenceHTTPClient(
-        api_url="https://detect.roboflow.com", # URL standar inferensi
+        api_url="https://detect.roboflow.com",
         api_key=api_key
     )
 
-    # Konversi bytes ke PIL Image
     image = Image.open(io.BytesIO(image_bytes))
 
     try:
-        # Menjalankan Workflow sesuai snippet Anda
-        # Note: Pastikan workspace_name dan workflow_id benar
+        # HAPUS 'use_cache=True' DI SINI
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": image},
-            use_cache=True
+            images={"image": image} 
         )
         
-        # Mengambil hasil prediksi dari struktur JSON workflow
-        # Biasanya output ada di index 0 jika workflow standard
         if resp and len(resp) > 0:
-            # Sesuaikan key ini dengan output spesifik workflow Anda
-            # Seringkali workflow mengembalikan dict dengan key 'predictions' atau langsung list
-            # Di sini saya asumsi strukturnya mirip standard object detection
-            return resp[0].get('predictions', []) # Mengambil list 'predictions'
+            # Sesuaikan key output json workflow Anda
+            return resp[0].get('predictions', [])
             
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
