@@ -58,7 +58,7 @@ def run_roboflow_detection(image_bytes):
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
             images={"image": image},
-            use_cache=True 
+            #use_cache=True 
         )
         
         if resp and len(resp) > 0:
