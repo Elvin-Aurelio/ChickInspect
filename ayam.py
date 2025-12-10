@@ -39,7 +39,6 @@ model = load_classifier_model()
 # 3. FUNGSI DETEKSI (JALUR STABIL - CLIENT.INFER)
 # ==========================================
 def run_roboflow_detection(image_bytes):
-    """Mengirim gambar ke Roboflow Workflow API."""
     try:
         api_key = st.secrets["roboflow_api_key"]
     except:
@@ -47,25 +46,26 @@ def run_roboflow_detection(image_bytes):
         return []
 
     client = InferenceHTTPClient(
-        api_url="https://serverless.roboflow.com"   ,
+        api_url="https://serverless.roboflow.com",
         api_key=api_key
     )
-    image = Image.open(io.BytesIO(image_bytes))
 
     try:
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": image}
-        )    
+            images={"image": image_bytes}   # BYTES, BUKAN PIL
+        )
+
         if resp and len(resp) > 0:
-            # Sesuaikan key output json workflow Anda
             return resp[0].get('predictions', [])
-           
+
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
         return []
+
     return []
+
 
 
 
