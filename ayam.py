@@ -57,7 +57,7 @@ def run_roboflow_detection(image_bytes):
     try:
         # PENTING: Ganti 'find-feses-3/1' dengan versi model Anda.
         # Angka '1' adalah versi. Jika Anda sudah train ulang jadi v2, ganti jadi 'find-feses-3/2'
-        resp = client.infer(image, model_id="find-feses-3-9hvtv/1")
+        resp = client.infer(image, model_id="find-feses-3/1")
         
         # Jalur ini mengembalikan dictionary yang rapi, tidak akan error 'list object...'
         if resp and 'predictions' in resp:
