@@ -81,55 +81,71 @@ def run_roboflow_detection(image_bytes):
 # ==========================================
 # 4. FUNGSI UTILITY (CROP & DRAW)
 # ==========================================
-def extract_predictions(result):
+def extract_predictions(resp):
     """
-    Menyederhanakan output Roboflow ke format:
-    list_of_pred_dict
+    Parser sangat robust untuk response Roboflow.
+    Hasil akhir SELALU list of prediction dict.
     """
-    if isinstance(result, list):
-        result = result[0]
-
-    if not isinstance(result, dict):
+    # Response kosong → tidak ada prediksi
+    if not resp:
         return []
 
-    # Ambil bagian predictions
-    if "predictions" in result:
-        pred_block = result["predictions"]
-        if isinstance(pred_block, dict) and "predictions" in pred_block:
-            return pred_block["predictions"]
+    # Jika respons berbentuk list → ambil item pertama
+    if isinstance(resp, list):
+        resp = resp[0]
 
-    return []
+    # Jika masih bukan dict → tidak valid
+    if not isinstance(resp, dict):
+        return []
 
-def draw_bounding_boxes(image, predictions):
-    from PIL import ImageDraw
+    # Ambil blok predictions
+    block = resp.get("predictions", {})
 
-    draw = ImageDraw.Draw(image)
+    # Jika tidak dict → return kosong
+    if not isinstance(block, dict):
+        return []
 
-    if not isinstance(predictions, list):
-        return image
+    # Ambil list prediksi bounding box
+    preds = block.get("predictions", [])
 
-    for pred in predictions:
-        if not isinstance(pred, dict):
+    # Jika bukan list → return kosong
+    if not isinstance(preds, list):
+        return []
+
+    # Filter hanya dict yang valid
+    preds = [
+        p for p in preds
+        if isinstance(p, dict) and all(k in p for k in ["x", "y", "width", "height"])
+    ]
+
+    return preds
+
+def draw_bounding_boxes(image, preds):
+    img = image.copy()
+    draw = ImageDraw.Draw(img)
+
+    for p in preds:
+        try:
+            x, y = p["x"], p["y"]
+            w, h = p["width"], p["height"]
+
+            x_min = x - w/2
+            y_min = y - h/2
+            x_max = x + w/2
+            y_max = y + h/2
+
+            draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
+
+            label = p.get("class", "obj")
+            conf = p.get("confidence", 0)
+
+            draw.text((x_min, y_min - 10), f"{label} ({conf:.2f})", fill="red")
+
+        except Exception:
+            # Skip 1 prediksi yang corrupt tanpa membuat app crash
             continue
 
-        required = ["x", "y", "width", "height"]
-        if not all(k in pred for k in required):
-            continue
-
-        x_center, y_center = pred["x"], pred["y"]
-        w, h = pred["width"], pred["height"]
-
-        x_min = x_center - w/2
-        y_min = y_center - h/2
-        x_max = x_center + w/2
-        y_max = y_center + h/2
-
-        draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
-        label = pred.get("class", "obj")
-        conf = pred.get("confidence", 0)
-        draw.text((x_min, y_min-10), f"{label} ({conf:.2f})", fill="red")
-
-    return image
+    return img
 
 def predict_crop(crop_img, model):
     """Melakukan prediksi penyakit pada satu potongan gambar."""
@@ -170,109 +186,113 @@ if uploaded_file is not None:
 
     if st.button("🔍 Deteksi Penyakit"):
         with st.spinner('Sedang memindai objek feses (Roboflow)...'):
-            # 2. Deteksi Objek
-            predictions = run_roboflow_detection(image_bytes)
+            # 2. Deteksi objek
+            raw_resp = run_roboflow_detection(image_bytes)
 
-        if not predictions:
-            st.warning("⚠️ Tidak ada objek feses yang terdeteksi. Coba ambil foto lebih dekat.")
+        # 3. Extract predictions
+        predictions = extract_predictions(raw_resp)
+
+        # 4. Gambar bounding box
+        bbox_image = draw_bounding_boxes(original_image, predictions)
+
+        # 5. Tampilkan hasil di kolom kedua
+        with col2:
+            st.image(
+                bbox_image,
+                caption=f"Terdeteksi {len(predictions)} Objek",
+                use_column_width=True
+            )
+
+        # --- PROSES KLASIFIKASI PER OBJEK ---
+        st.divider()
+        st.subheader("🔬 Hasil Analisis Laboratorium AI")
+            
+        results = []
+        
+        # Progress bar
+        progress_bar = st.progress(0)
+        
+        # Filter: HANYA proses jika Roboflow yakin itu feses minimal 50% (0.5)
+        # Ini menyaring batu/jerami yang "agak mirip" feses
+        MIN_DETECTION_CONFIDENCE = 0.5 
+        
+        valid_predictions = [p for p in predictions if p['confidence'] >= MIN_DETECTION_CONFIDENCE]
+
+        if not valid_predictions:
+            st.warning("⚠️ Objek terdeteksi, namun tingkat keyakinannya terlalu rendah (kemungkinan bukan feses). Mohon foto ulang.")
         else:
-            predictions = extract_predictions(result=predictions)
-            # Visualisasi Bounding Box
-            bbox_image = draw_bounding_boxes(original_image, predictions)
-            with col2:
-                st.image(bbox_image, caption=f"Terdeteksi {len(predictions)} Objek", use_column_width=True)
+            for i, pred in enumerate(valid_predictions):
+                # Crop logic
+                x_center, y_center = pred['x'], pred['y']
+                w, h = pred['width'], pred['height']
+                
+                left = x_center - (w / 2)
+                top = y_center - (h / 2)
+                right = x_center + (w / 2)
+                bottom = y_center + (h / 2)
+                
+                # Crop gambar
+                crop_img = original_image.crop((left, top, right, bottom))
+                
+                # Prediksi Penyakit
+                label, disease_conf = predict_crop(crop_img, model)
+                bbox_conf = pred['confidence']
+                
+                # --- LOGIKA BARU: COMPOSITE SCORE ---
+                # Kita kalikan keyakinan Roboflow x Keyakinan MobileNet
+                final_score = bbox_conf * disease_conf
+                
+                results.append({
+                    "id": i+1,
+                    "bbox_conf": bbox_conf,       # Yakin ini feses?
+                    "disease": label,
+                    "disease_conf": disease_conf, # Yakin ini penyakit X?
+                    "final_score": final_score,   # Skor Akhir (Perkalian)
+                    "img": crop_img
+                })
+                progress_bar.progress((i + 1) / len(valid_predictions))
             
-            # --- PROSES KLASIFIKASI PER OBJEK ---
+            progress_bar.empty()
 
+            # --- TAMPILKAN HASIL INDIVIDUAL ---
+            cols = st.columns(min(len(results), 3))
+            for idx, res in enumerate(results):
+                with cols[idx % 3]:
+                    st.image(res['img'], caption=f"Objek #{res['id']}")
+                    # Tampilkan detail skor agar user paham
+                    st.markdown(f"**{res['disease']}**")
+                    st.caption(f"YOLO: {res['bbox_conf']:.2f} | Model: {res['disease_conf']:.2f}")
+                    st.caption(f"**Score: {res['final_score']:.3f}**")
+
+            # --- KESIMPULAN BERDASARKAN FINAL SCORE TERTINGGI ---
             st.divider()
-            st.subheader("🔬 Hasil Analisis Laboratorium AI")
             
-            results = []
+            # Cari prediksi dengan FINAL SCORE tertinggi (bukan cuma disease conf)
+            best_pred = max(results, key=lambda x: x['final_score'])
             
-            # Progress bar
-            progress_bar = st.progress(0)
+            st.success(f"### ✅ Kesimpulan Diagnosa: {best_pred['disease']}")
+            st.markdown(f"""
+            Sistem memilih hasil ini karena memiliki kombinasi keyakinan tertinggi:
+            - Tingkat keyakinan objek feses: **{best_pred['bbox_conf']*100:.1f}%**
+            - Tingkat kecocokan gejala penyakit: **{best_pred['disease_conf']*100:.1f}%**
+            """)
             
-            # Filter: HANYA proses jika Roboflow yakin itu feses minimal 50% (0.5)
-            # Ini menyaring batu/jerami yang "agak mirip" feses
-            MIN_DETECTION_CONFIDENCE = 0.5 
-            
-            valid_predictions = [p for p in predictions if p['confidence'] >= MIN_DETECTION_CONFIDENCE]
-
-            if not valid_predictions:
-                st.warning("⚠️ Objek terdeteksi, namun tingkat keyakinannya terlalu rendah (kemungkinan bukan feses). Mohon foto ulang.")
-            else:
-                for i, pred in enumerate(valid_predictions):
-                    # Crop logic
-                    x_center, y_center = pred['x'], pred['y']
-                    w, h = pred['width'], pred['height']
-                    
-                    left = x_center - (w / 2)
-                    top = y_center - (h / 2)
-                    right = x_center + (w / 2)
-                    bottom = y_center + (h / 2)
-                    
-                    # Crop gambar
-                    crop_img = original_image.crop((left, top, right, bottom))
-                    
-                    # Prediksi Penyakit
-                    label, disease_conf = predict_crop(crop_img, model)
-                    bbox_conf = pred['confidence']
-                    
-                    # --- LOGIKA BARU: COMPOSITE SCORE ---
-                    # Kita kalikan keyakinan Roboflow x Keyakinan MobileNet
-                    final_score = bbox_conf * disease_conf
-                    
-                    results.append({
-                        "id": i+1,
-                        "bbox_conf": bbox_conf,       # Yakin ini feses?
-                        "disease": label,
-                        "disease_conf": disease_conf, # Yakin ini penyakit X?
-                        "final_score": final_score,   # Skor Akhir (Perkalian)
-                        "img": crop_img
-                    })
-                    progress_bar.progress((i + 1) / len(valid_predictions))
-                
-                progress_bar.empty()
-
-                # --- TAMPILKAN HASIL INDIVIDUAL ---
-                cols = st.columns(min(len(results), 3))
-                for idx, res in enumerate(results):
-                    with cols[idx % 3]:
-                        st.image(res['img'], caption=f"Objek #{res['id']}")
-                        # Tampilkan detail skor agar user paham
-                        st.markdown(f"**{res['disease']}**")
-                        st.caption(f"YOLO: {res['bbox_conf']:.2f} | Model: {res['disease_conf']:.2f}")
-                        st.caption(f"**Score: {res['final_score']:.3f}**")
-
-                # --- KESIMPULAN BERDASARKAN FINAL SCORE TERTINGGI ---
-                st.divider()
-                
-                # Cari prediksi dengan FINAL SCORE tertinggi (bukan cuma disease conf)
-                best_pred = max(results, key=lambda x: x['final_score'])
-                
-                st.success(f"### ✅ Kesimpulan Diagnosa: {best_pred['disease']}")
-                st.markdown(f"""
-                Sistem memilih hasil ini karena memiliki kombinasi keyakinan tertinggi:
-                - Tingkat keyakinan objek feses: **{best_pred['bbox_conf']*100:.1f}%**
-                - Tingkat kecocokan gejala penyakit: **{best_pred['disease_conf']*100:.1f}%**
-                """)
-                
-                # Rekomendasi Penanganan
-                with st.expander("ℹ️ Rekomendasi Penanganan Awal"):
-                    if best_pred['disease'] == 'Coccidiosis':
-                        st.write("- 🔴 **Urgent:** Pisahkan ayam yang sakit segera.")
-                        st.write("- Berikan obat anticoccidial (seperti Amprolium).")
-                        st.write("- Jaga kekeringan kandang, ganti sekam yang basah.")
-                    elif best_pred['disease'] == 'New Castle Disease':
-                        st.error("💀 **BAHAYA TINGGI!** Segera lapor dokter hewan/dinas setempat.")
-                        st.write("- Isolasi total area kandang.")
-                        st.write("- Vaksinasi darurat untuk ayam yang masih sehat.")
-                    elif best_pred['disease'] == 'Salmonella':
-                        st.write("- Berikan antibiotik spektrum luas sesuai resep vet.")
-                        st.write("- Cek kualitas air minum & sanitasi tempat pakan.")
-                    else: # Healthy
-                        st.write("- ✅ Kondisi pencernaan ayam tampak normal.")
-                        st.write("- Lanjutkan program pakan dan vitamin rutin.")
+            # Rekomendasi Penanganan
+            with st.expander("ℹ️ Rekomendasi Penanganan Awal"):
+                if best_pred['disease'] == 'Coccidiosis':
+                    st.write("- 🔴 **Urgent:** Pisahkan ayam yang sakit segera.")
+                    st.write("- Berikan obat anticoccidial (seperti Amprolium).")
+                    st.write("- Jaga kekeringan kandang, ganti sekam yang basah.")
+                elif best_pred['disease'] == 'New Castle Disease':
+                    st.error("💀 **BAHAYA TINGGI!** Segera lapor dokter hewan/dinas setempat.")
+                    st.write("- Isolasi total area kandang.")
+                    st.write("- Vaksinasi darurat untuk ayam yang masih sehat.")
+                elif best_pred['disease'] == 'Salmonella':
+                    st.write("- Berikan antibiotik spektrum luas sesuai resep vet.")
+                    st.write("- Cek kualitas air minum & sanitasi tempat pakan.")
+                else: # Healthy
+                    st.write("- ✅ Kondisi pencernaan ayam tampak normal.")
+                    st.write("- Lanjutkan program pakan dan vitamin rutin.")
 
 # Placeholder untuk Chatbot (Next Step)
 if st.checkbox("💬 Konsultasi dengan Dokter AI"):
