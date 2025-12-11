@@ -65,6 +65,11 @@ def run_roboflow_detection(image_bytes):
         st.write("=== RAW RESPONSE WORKFLOW ===")
         st.json(resp)  # DEBUG UTAMA
 
+        st.write("TYPE:", type(resp))
+        if isinstance(resp, list):
+            st.write("LIST LENGTH:", len(resp))
+            st.write("FIRST ITEM TYPE:", type(resp[0]))
+
         return resp  # sementara return mentah
 
         if isinstance(resp, list) and len(resp) > 0:
