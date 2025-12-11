@@ -45,7 +45,7 @@ def run_roboflow_detection(image_bytes):
         api_key = st.secrets["roboflow_api_key"]
     except:
         st.warning("API Key belum disetting di secrets.toml.")
-        return []
+        return None
 
     client = InferenceHTTPClient(
         api_url="https://serverless.roboflow.com",
@@ -63,58 +63,47 @@ def run_roboflow_detection(image_bytes):
         )
 
         st.write("=== RAW RESPONSE WORKFLOW ===")
-        st.json(resp)  # DEBUG UTAMA
+        st.json(resp)
 
-        st.write("TYPE:", type(resp))
+        # ============================================
+        # NORMALISASI RESPONSE (COMPATIBLE ALL VERSIONS)
+        # ============================================
+
+        # Case 1: workflow mengembalikan LIST → ambil item pertama
         if isinstance(resp, list):
-            st.write("LIST LENGTH:", len(resp))
-            st.write("FIRST ITEM TYPE:", type(resp[0]))
+            resp = resp[0]
 
-        return resp  # sementara return mentah
+        # Case 2: jika masih string JSON → decode
+        if isinstance(resp, str):
+            import json
+            resp = json.loads(resp)
 
-        if isinstance(resp, list) and len(resp) > 0:
-            block = resp[0]
-
-            preds = block.get("predictions", [])
-            if isinstance(preds, list):
-                return preds
-        
-        return []
+        # Sekarang resp pasti dict
+        return resp
 
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
-        return []
+        return None
 
 
 # ==========================================
 # 4. FUNGSI UTILITY (CROP & DRAW)
 # ==========================================
 def extract_predictions(resp):
-    """Mengembalikan list prediksi bounding box (x, y, w, h, conf, class)."""
-    
-    if not resp:
+    if resp is None:
         return []
 
-    # resp = list of dict
-    if isinstance(resp, dict):
-        # Jika user salah kirim resp, normalize ke list
-        resp = [resp]
-
-    if isinstance(resp, list) and len(resp) > 0:
-        block = resp[0]
-
-        preds = block.get("predictions", [])
+    # Format workflow terbaru
+    if "predictions" in resp and isinstance(resp["predictions"], dict):
+        preds = resp["predictions"].get("predictions", [])
         if isinstance(preds, list):
-            # Filter hanya prediksi valid
-            preds = [
-                p for p in preds
-                if isinstance(p, dict) and
-                   all(k in p for k in ["x", "y", "width", "height"])
-            ]
             return preds
 
-    return []
+    # Format lama (langsung list)
+    if "predictions" in resp and isinstance(resp["predictions"], list):
+        return resp["predictions"]
 
+    return []
 
 def draw_bounding_boxes(image, preds):
     img = image.copy()
