@@ -101,41 +101,55 @@ def run_roboflow_detection(image_bytes):
 # ==========================================
 # 4. FUNGSI UTILITY (CROP & DRAW)
 # ==========================================
+def extract_predictions(result):
+    """
+    Menyederhanakan output Roboflow ke format:
+    list_of_pred_dict
+    """
+    if isinstance(result, list):
+        result = result[0]
+
+    if not isinstance(result, dict):
+        return []
+
+    # Ambil bagian predictions
+    if "predictions" in result:
+        pred_block = result["predictions"]
+        if isinstance(pred_block, dict) and "predictions" in pred_block:
+            return pred_block["predictions"]
+
+    return []
+
 def draw_bounding_boxes(image, predictions):
-    """Menggambar kotak di sekitar objek yang terdeteksi."""
-    img_draw = image.copy()
-    draw = ImageDraw.Draw(img_draw)
-    
-    # Coba load font, kalau tidak ada pakai default
-    try:
-        font = ImageFont.truetype("arial.ttf", 20)
-    except:
-        font = ImageFont.load_default()
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
+
+    if not isinstance(predictions, list):
+        return image
 
     for pred in predictions:
-        # Konversi Center-XY (Roboflow) ke Corner-XY (PIL)
-        # JSON: x, y adalah titik tengah. width, height adalah ukuran.
-        x_center, y_center = pred['x'], pred['y']
-        w, h = pred['width'], pred['height']
-        
-        x_min = x_center - (w / 2)
-        y_min = y_center - (h / 2)
-        x_max = x_center + (w / 2)
-        y_max = y_center + (h / 2)
+        if not isinstance(pred, dict):
+            continue
 
-        # Gambar Kotak
+        required = ["x", "y", "width", "height"]
+        if not all(k in pred for k in required):
+            continue
+
+        x_center, y_center = pred["x"], pred["y"]
+        w, h = pred["width"], pred["height"]
+
+        x_min = x_center - w/2
+        y_min = y_center - h/2
+        x_max = x_center + w/2
+        y_max = y_center + h/2
+
         draw.rectangle([x_min, y_min, x_max, y_max], outline="red", width=3)
-        
-        # Tulis Label Confidence Deteksi
-        text = f"Feses: {pred['confidence']:.2f}"
-        
-        # Hitung posisi text background agar rapi
-        # bbox return (left, top, right, bottom)
-        text_bbox = draw.textbbox((x_min, y_min), text, font=font)
-        draw.rectangle((text_bbox[0], text_bbox[1]-5, text_bbox[2], text_bbox[3]+5), fill="red")
-        draw.text((x_min, y_min-5), text, fill="white", font=font)
+        label = pred.get("class", "obj")
+        conf = pred.get("confidence", 0)
+        draw.text((x_min, y_min-10), f"{label} ({conf:.2f})", fill="red")
 
-    return img_draw
+    return image
 
 def predict_crop(crop_img, model):
     """Melakukan prediksi penyakit pada satu potongan gambar."""
@@ -182,6 +196,7 @@ if uploaded_file is not None:
         if not predictions:
             st.warning("⚠️ Tidak ada objek feses yang terdeteksi. Coba ambil foto lebih dekat.")
         else:
+            predictions = extract_predictions(result=predictions)
             # Visualisasi Bounding Box
             bbox_image = draw_bounding_boxes(original_image, predictions)
             with col2:
