@@ -62,10 +62,10 @@ def run_roboflow_detection(image_bytes):
             images={"image": img_b64}
         )
 
-        # === STRUKTUR BENAR ROBOWFLOW ===
-        # resp → list
-        # resp[0] → dict
-        # resp[0]["predictions"] → list of bbox
+        st.write("=== RAW RESPONSE WORKFLOW ===")
+        st.json(resp)  # DEBUG UTAMA
+
+        return resp  # sementara return mentah
 
         if isinstance(resp, list) and len(resp) > 0:
             block = resp[0]
