@@ -59,18 +59,21 @@ def run_roboflow_detection(image_bytes):
         resp = client.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={
-                "image": img_b64  # ✅ BASE64 — PALING AMAN & UNIVERSAL
-            }
+            images={"image": img_b64}
         )
-        st.write(f"Roboflow Response: {resp}")
 
-        # Output Roboflow biasanya list[ { predictions: {...} } ]
+        # === STRUKTUR BENAR ROBOWFLOW ===
+        # resp → list
+        # resp[0] → dict
+        # resp[0]["predictions"] → list of bbox
+
         if isinstance(resp, list) and len(resp) > 0:
             block = resp[0]
-            if "predictions" in block:
-                return block["predictions"]
 
+            preds = block.get("predictions", [])
+            if isinstance(preds, list):
+                return preds
+        
         return []
 
     except Exception as e:
@@ -82,43 +85,31 @@ def run_roboflow_detection(image_bytes):
 # 4. FUNGSI UTILITY (CROP & DRAW)
 # ==========================================
 def extract_predictions(resp):
-    """
-    Parser sangat robust untuk response Roboflow.
-    Hasil akhir SELALU list of prediction dict.
-    """
-    # Response kosong → tidak ada prediksi
+    """Mengembalikan list prediksi bounding box (x, y, w, h, conf, class)."""
+    
     if not resp:
         return []
 
-    # Jika respons berbentuk list → ambil item pertama
-    if isinstance(resp, list):
-        resp = resp[0]
+    # resp = list of dict
+    if isinstance(resp, dict):
+        # Jika user salah kirim resp, normalize ke list
+        resp = [resp]
 
-    # Jika masih bukan dict → tidak valid
-    if not isinstance(resp, dict):
-        return []
+    if isinstance(resp, list) and len(resp) > 0:
+        block = resp[0]
 
-    # Ambil blok predictions
-    block = resp.get("predictions", {})
+        preds = block.get("predictions", [])
+        if isinstance(preds, list):
+            # Filter hanya prediksi valid
+            preds = [
+                p for p in preds
+                if isinstance(p, dict) and
+                   all(k in p for k in ["x", "y", "width", "height"])
+            ]
+            return preds
 
-    # Jika tidak dict → return kosong
-    if not isinstance(block, dict):
-        return []
+    return []
 
-    # Ambil list prediksi bounding box
-    preds = block.get("predictions", [])
-
-    # Jika bukan list → return kosong
-    if not isinstance(preds, list):
-        return []
-
-    # Filter hanya dict yang valid
-    preds = [
-        p for p in preds
-        if isinstance(p, dict) and all(k in p for k in ["x", "y", "width", "height"])
-    ]
-
-    return preds
 
 def draw_bounding_boxes(image, preds):
     img = image.copy()
