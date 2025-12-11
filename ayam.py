@@ -63,7 +63,7 @@ def run_roboflow_detection(image_bytes):
                 "image": img_b64  # ✅ BASE64 — PALING AMAN & UNIVERSAL
             }
         )
-        st.debug(f"Roboflow Response: {resp}")
+        st.write(f"Roboflow Response: {resp}")
 
         # Output Roboflow biasanya list[ { predictions: {...} } ]
         if isinstance(resp, list) and len(resp) > 0:
