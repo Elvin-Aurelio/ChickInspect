@@ -40,7 +40,6 @@ model = load_classifier_model()
 # ==========================================
 # 3. FUNGSI DETEKSI (JALUR STABIL - CLIENT.INFER)
 # ==========================================
-
 def run_roboflow_detection(image_bytes):
     try:
         api_key = st.secrets["roboflow_api_key"]
@@ -53,49 +52,29 @@ def run_roboflow_detection(image_bytes):
         api_key=api_key
     )
 
-    tmp_path = None
+    import base64
+    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
     try:
-        # === 1. Simpan image ke file sementara ===
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
-            tmp.write(image_bytes)
-            tmp_path = tmp.name
+        resp = client.run_workflow(
+            workspace_name="elvin-3wtt1",
+            workflow_id="find-feses-3",
+            images={
+                "image": img_b64  # ✅ BASE64 — PALING AMAN & UNIVERSAL
+            }
+        )
 
-        # === 2. COBA FORMAT BARU (SESUAI COLAB) ===
-        try:
-            resp = client.run_workflow(
-                workspace_name="elvin-3wtt1",
-                workflow_id="find-feses-3",
-                images={
-                    "image": tmp_path   # ✅ FORMAT BARU
-                }
-            )
-
-        # === 3. JIKA FORMAT BARU GAGAL → FALLBACK KE FORMAT LAMA ===
-        except Exception:
-            resp = client.run_workflow(
-                workspace_name="elvin-3wtt1",
-                workflow_id="find-feses-3",
-                images=[
-                    {"image": tmp_path}  # ✅ FORMAT LAMA
-                ]
-            )
-
-        # === 4. AMBIL OUTPUT DENGAN AMAN ===
-        if resp and isinstance(resp, list) and len(resp) > 0:
-            if isinstance(resp[0], dict):
-                return resp[0].get("predictions", [])
+        # Output Roboflow biasanya list[ { predictions: {...} } ]
+        if isinstance(resp, list) and len(resp) > 0:
+            block = resp[0]
+            if "predictions" in block:
+                return block["predictions"]
 
         return []
 
     except Exception as e:
         st.error(f"Error Roboflow: {e}")
         return []
-
-    finally:
-        # === 5. BERSIHKAN FILE SEMENTARA ===
-        if tmp_path and os.path.exists(tmp_path):
-            os.remove(tmp_path)
 
 
 # ==========================================
