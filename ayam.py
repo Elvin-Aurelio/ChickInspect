@@ -235,5 +235,124 @@ if uploaded_file is not None:
                 else:
                     st.write("- ✅ Ayam sehat. Lanjutkan perawatan rutin.")
 
-if st.checkbox("💬 Konsultasi dengan Dokter AI"):
-   st.info("Fitur chatbot akan segera hadir!")
+
+import streamlit as st
+import os
+from google import genai
+from google.genai.errors import APIError
+
+# --- 0. KONFIGURASI DAN SET UP API KEY ---
+
+# Mengambil API Key dari Environment Variable (GEMINI_API_KEY)
+# INI ADALAH CARA AMAN. Kunci API Anda TIDAK tersimpan di file ini.
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
+if not GEMINI_API_KEY:
+    st.error("❌ Kesalahan Konfigurasi API: GEMINI_API_KEY belum diset.")
+    st.info("⚠️ Silakan set Environment Variable Anda di terminal (misalnya: export GEMINI_API_KEY='...'). Aplikasi dihentikan.")
+    st.stop() 
+
+try:
+    client = genai.Client(api_key=GEMINI_API_KEY)
+except Exception:
+    st.error("❌ Kesalahan Klien Gemini: Tidak dapat terhubung.")
+    st.stop()
+
+# Tentukan peran AI (System Instruction) untuk Dokter AI
+SYSTEM_PROMPT = (
+    "Anda adalah Dokter AI ahli dalam kesehatan unggas dan diagnosis penyakit ayam. "
+    "Fokus utama Anda adalah menganalisis gejala, memberikan saran pencegahan, dan informasi umum. "
+    "Ketika diminta menganalisis feses atau gambar, selalu arahkan pengguna untuk menggunakan fitur unggah foto di aplikasi. "
+    "Berikan jawaban yang singkat, informatif, dan profesional. Selalu jawab dalam Bahasa Indonesia."
+)
+
+# --- 1. SET UP TATA LETAK APLIKASI ---
+
+st.set_page_config(
+    page_title="ChikInspect AI",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Sidebar (Riwayat Diagnosa)
+st.sidebar.title("📚 Riwayat Diagnosa")
+st.sidebar.write("Daftar hasil pemeriksaan sesi ini:")
+st.sidebar.info("Belum ada data diagnosa.")
+
+# Judul Utama
+st.title("🐔 ChikInspect AI")
+
+# --- 2. FITUR UPLOAD FESES (Diagnosis Otomatis) ---
+
+st.subheader("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
+
+# Area Drop and Drag
+uploaded_file = st.file_uploader(
+    "Drag and drop file here",
+    type=['jpg', 'jpeg', 'png'],
+    accept_multiple_files=False,
+    help="Limit 200MB per file. JPG, JPEG, PNG"
+)
+
+# Tampilkan gambar dan proses (Saat ini hanya placeholder)
+if uploaded_file is not None:
+    # Tampilkan gambar yang diunggah
+    st.image(uploaded_file, caption=uploaded_file.name, width=250)
+    st.success(f"File **{uploaded_file.name}** berhasil diunggah.")
+    st.info("Proses analisis gambar oleh model ML akan dimulai di sini. Fitur diagnosis sedang dikembangkan.")
+
+
+st.markdown("---")
+
+# --- 3. FITUR CHATBOT DOKTER AI (Gemini Powered) ---
+
+# Pengganti fungsional dari if st.checkbox("Konsultasi dengan Dokter AI"):
+st.header("💬 Konsultasi dengan Dokter AI")
+st.caption("Silakan ajukan pertanyaan seputar gejala, pencegahan, atau penyakit ayam...")
+
+# Inisialisasi Riwayat Chat
+if "messages" not in st.session_state:
+    # Mulai dengan pesan sistem (tidak ditampilkan) dan pesan sambutan
+    st.session_state.messages = [
+        {"role": "system", "content": SYSTEM_PROMPT}, 
+        {"role": "assistant", "content": "Halo! Saya Dokter AI ChikInspect. Ada yang bisa saya bantu terkait kesehatan ayam Anda?"}
+    ]
+
+# Inisialisasi Chat Session Gemini (Untuk mempertahankan konteks percakapan)
+if "chat_session" not in st.session_state:
+    st.session_state.chat_session = client.chats.create(
+        model="gemini-2.5-flash",
+        system_instruction=SYSTEM_PROMPT
+    )
+
+# Menampilkan Riwayat Chat (Lewati pesan pertama yang role: system)
+for message in st.session_state.messages[1:]:
+    with st.chat_message(message["role"]):
+        st.markdown(message["content"])
+
+# Input Pengguna dan Generasi Respon
+if prompt := st.chat_input("Tanyakan penyakit, gejala, atau pencegahan..."):
+    
+    # 1. Tampilkan pesan pengguna
+    with st.chat_message("user"):
+        st.markdown(prompt)
+
+    # Tambahkan pesan pengguna ke riwayat
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    
+    # 2. Kirim ke Gemini dan dapatkan respons
+    with st.chat_message("assistant"):
+        with st.spinner("Dokter AI sedang menganalisis..."):
+            
+            try:
+                # Kirim prompt ke chat session untuk mempertahankan konteks
+                response = st.session_state.chat_session.send_message(prompt)
+                st.markdown(response.text)
+                
+                # Tambahkan respons asisten ke riwayat
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            
+            except APIError:
+                st.error("Terjadi kesalahan pada koneksi Gemini API. Pastikan API Key Anda valid dan coba lagi.")
+            except Exception:
+                st.error("Terjadi kesalahan yang tidak terduga saat memproses permintaan Anda.")
+
