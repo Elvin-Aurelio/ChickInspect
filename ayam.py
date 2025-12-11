@@ -62,9 +62,7 @@ def run_roboflow_detection(image_bytes):
             images={"image": img_b64}
         )
 
-        st.write("=== RAW RESPONSE WORKFLOW ===")
-        st.json(resp)
-
+        
         # ============================================
         # NORMALISASI RESPONSE (COMPATIBLE ALL VERSIONS)
         # ============================================
@@ -173,9 +171,6 @@ if uploaded_file is not None:
         with st.spinner('Sedang memindai objek feses (Roboflow)...'):
             # 2. Deteksi objek
             raw_resp = run_roboflow_detection(image_bytes)
-            import json
-            st.subheader("📌 RAW RESPONSE (DEBUG)")
-            st.code(json.dumps(raw_resp, indent=2), language="json")
 
         # 3. Extract predictions
         predictions = extract_predictions(raw_resp)
