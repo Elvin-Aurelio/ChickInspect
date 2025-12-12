@@ -239,16 +239,22 @@ if uploaded_file is not None:
 import streamlit as st
 import os
 from google import genai
-from google.genai.errors import APIError
+from google.genai.errors import APIError 
+
+# Import tambahan yang Anda miliki di GitHub (penting untuk analisis gambar)
+import tensorflow as tf
+import numpy as np
+from PIL import Image
+# from inference_sdk import InferenceHTTPClient # Dicontohkan sebagai komentar karena mungkin tidak selalu diperlukan
 
 # --- 0. KONFIGURASI DAN SET UP API KEY ---
 
 # Mengambil API Key dari Environment Variable (GEMINI_API_KEY)
-# INI ADALAH CARA AMAN. Kunci API Anda TIDAK tersimpan di file ini.
+# Kunci akan dibaca dari Streamlit Secrets saat di-deploy, atau dari 'set'/'export' lokal.
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
 if not GEMINI_API_KEY:
     st.error("❌ Kesalahan Konfigurasi API: GEMINI_API_KEY belum diset.")
-    st.info("⚠️ Silakan set Environment Variable Anda di terminal (misalnya: export GEMINI_API_KEY='...'). Aplikasi dihentikan.")
+    st.info("⚠️ Aplikasi dihentikan. Silakan set Environment Variable Anda (lokal) atau periksa Streamlit Secrets (deployment).")
     st.stop() 
 
 try:
@@ -293,12 +299,18 @@ uploaded_file = st.file_uploader(
     help="Limit 200MB per file. JPG, JPEG, PNG"
 )
 
-# Tampilkan gambar dan proses (Saat ini hanya placeholder)
+# Tampilkan gambar dan proses (Ini adalah tempat Anda mengintegrasikan model .keras Anda)
 if uploaded_file is not None:
     # Tampilkan gambar yang diunggah
     st.image(uploaded_file, caption=uploaded_file.name, width=250)
     st.success(f"File **{uploaded_file.name}** berhasil diunggah.")
-    st.info("Proses analisis gambar oleh model ML akan dimulai di sini. Fitur diagnosis sedang dikembangkan.")
+    
+    # ⚠️ TEMPAT UNTUK INTEGRASI MODEL ML Anda ⚠️
+    st.info("Proses analisis gambar oleh model ML akan dimulai di sini.")
+    # Di sini Anda akan menambahkan kode untuk:
+    # 1. Memuat model keras/tensorflow: tf.keras.models.load_model('model_path.keras')
+    # 2. Memproses gambar: Image.open(uploaded_file)
+    # 3. Melakukan prediksi: model.predict(preprocessed_image)
 
 
 st.markdown("---")
@@ -355,4 +367,3 @@ if prompt := st.chat_input("Tanyakan penyakit, gejala, atau pencegahan..."):
                 st.error("Terjadi kesalahan pada koneksi Gemini API. Pastikan API Key Anda valid dan coba lagi.")
             except Exception:
                 st.error("Terjadi kesalahan yang tidak terduga saat memproses permintaan Anda.")
-
