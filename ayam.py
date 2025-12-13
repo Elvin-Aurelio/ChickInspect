@@ -287,7 +287,7 @@ def ask_gemini(messages):
         return response.text
     except Exception as e:
         st.error(f"Error saat memanggil Gemini API: {str(e)}")
-        return "Maaf, terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi."
+        
 
 st.header("💬 Konsultasi dengan Dokter AI")
 st.caption("Diskusikan hasil diagnosa atau tanya tips perawatan ayam...")
