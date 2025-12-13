@@ -166,6 +166,17 @@ st.markdown("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
 # UPLOAD FILE (HANYA SATU KALI DISINI)
 uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
 
+# Reset chat dan context ketika file baru di-upload
+if uploaded_file is not None:
+    # Cek apakah ini file baru (berbeda dari sebelumnya)
+    if "last_uploaded_file" not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
+        # Reset chat messages dan prediction context
+        if "messages" in st.session_state:
+            st.session_state.messages = []
+        if "prediction_context" in st.session_state:
+            del st.session_state.prediction_context
+        st.session_state.last_uploaded_file = uploaded_file.name
+
 if uploaded_file is not None:
     image_bytes = uploaded_file.getvalue()
     original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
@@ -194,18 +205,27 @@ if uploaded_file is not None:
 
         if not valid_predictions:
             st.warning("⚠️ Tidak ada objek feses yang terdeteksi dengan jelas.")
+            # Hapus prediction_context jika tidak ada hasil
+            if "prediction_context" in st.session_state:
+                del st.session_state.prediction_context
+            # Reset chat messages jika tidak ada hasil
+            if "messages" in st.session_state:
+                st.session_state.messages = []
         else:
             for i, pred in enumerate(valid_predictions):
                 x, y, w, h = pred['x'], pred['y'], pred['width'], pred['height']
                 crop_img = original_image.crop((x-w/2, y-h/2, x+w/2, y+h/2))
                 
                 label, disease_conf = predict_crop(crop_img, model)
-                final_score = pred['confidence'] * disease_conf
+                roboflow_conf = pred['confidence']
+                final_score = roboflow_conf * disease_conf
                 
                 results.append({
                     "id": i+1,
                     "disease": label,
                     "final_score": final_score,
+                    "roboflow_confidence": roboflow_conf,
+                    "disease_confidence": disease_conf,
                     "img": crop_img
                 })
                 progress_bar.progress((i + 1) / len(valid_predictions))
@@ -218,7 +238,8 @@ if uploaded_file is not None:
                 with cols[idx % 3]:
                     st.image(res['img'], width=100)
                     st.caption(f"**{res['disease']}**")
-                    st.caption(f"Skor: {res['final_score']:.3f}")
+                    st.caption(f"Final Score: {res['final_score']:.3f}")
+                    st.caption(f"Roboflow: {res['roboflow_confidence']:.3f} | Penyakit: {res['disease_confidence']:.3f}")
 
             # Kesimpulan & Simpan
             if results:
@@ -227,11 +248,14 @@ if uploaded_file is not None:
                 st.session_state.prediction_context = f"""
                 Hasil analisis AI terbaru:
                 - Penyakit terdeteksi: {best_pred['disease']}
-                - Skor keyakinan: {best_pred['final_score']:.2f}
+                - Final Score: {best_pred['final_score']:.3f}
+                - Roboflow Detection: {best_pred['roboflow_confidence']:.3f}
+                - Disease Classification: {best_pred['disease_confidence']:.3f}
                 - Waktu pemeriksaan: {datetime.now().strftime('%H:%M:%S')}
                 """
                 st.success(f"### ✅ Diagnosa Utama: {best_pred['disease']}")
-                st.info(f"**Skor Keyakinan:** {best_pred['final_score']:.3f} ({best_pred['final_score']*100:.1f}%)")
+                st.info(f"**Final Score:** {best_pred['final_score']:.3f} ({best_pred['final_score']*100:.1f}%)")
+                st.info(f"**Detail Skor:** Roboflow Detection = {best_pred['roboflow_confidence']:.3f} ({best_pred['roboflow_confidence']*100:.1f}%) × Disease Classification = {best_pred['disease_confidence']:.3f} ({best_pred['disease_confidence']*100:.1f}%)")
                 
                 # Simpan ke History
                 st.session_state['history'].append({
@@ -298,10 +322,16 @@ else:
     if st.session_state.page == "chat":
         st.header("💬 Konsultasi Dokter AI")
 
-        if "messages" not in st.session_state:
-            st.session_state.messages = [
-                {"role": "assistant", "content": "Halo! Saya sudah melihat hasil analisis ayam Anda. Ada yang ingin ditanyakan?"}
-            ]
+        if "messages" not in st.session_state or len(st.session_state.messages) == 0:
+            # Cek apakah ada hasil analisis yang sudah dilakukan
+            if "prediction_context" in st.session_state and st.session_state.prediction_context:
+                st.session_state.messages = [
+                    {"role": "assistant", "content": "Halo! Saya sudah melihat hasil analisis ayam Anda. Ada yang ingin ditanyakan?"}
+                ]
+            else:
+                st.session_state.messages = [
+                    {"role": "assistant", "content": "Halo! Saya adalah Dokter AI untuk kesehatan unggas. Silakan upload dan deteksi gambar feses ayam terlebih dahulu, atau langsung tanyakan apa yang ingin Anda ketahui tentang kesehatan ayam."}
+                ]
 
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
