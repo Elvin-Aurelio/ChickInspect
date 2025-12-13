@@ -13,10 +13,6 @@ from google import genai
 from google.genai.errors import APIError
 
 import os
-st.write("📂 Current working directory:", os.getcwd())
-st.write("📁 Files here:", os.listdir("."))
-
-
 
 # ==========================================
 # 1. KONFIGURASI HALAMAN & API KEY
@@ -262,6 +258,7 @@ def ask_gemini(messages):
         client = genai.Client(api_key=GEMINI_API_KEY)
 
         # Build contents - hanya user dan model/assistant, tanpa system
+        # Format: Content object dengan role dan parts (list of Part objects)
         contents = []
         for m in messages:
             if m["role"] != "system":
@@ -269,13 +266,14 @@ def ask_gemini(messages):
                 role = "model" if m["role"] == "assistant" else "user"
                 contents.append({
                     "role": role,
-                    "parts": [m["content"]]
+                    "parts": [{"text": m["content"]}]
                 })
 
         # System instruction dikirim via config, bukan contents
+        # Format bisa string atau Content object dengan parts
         system_prompt = build_system_prompt()
         config = {
-            "system_instruction": system_prompt
+            "system_instruction": {"parts": [{"text": system_prompt}]}
         }
 
         response = client.models.generate_content(
