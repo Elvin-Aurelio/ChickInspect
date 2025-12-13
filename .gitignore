@@ -15,11 +15,7 @@ dataset_cropped/
 data.zip
 /content/
 
-# --- Model (Opsional) ---
-# GitHub menolak file > 100MB.
-# Jika model .keras Anda > 100MB, hapus tanda pagar di bawah ini:
-# *.keras
-# *.h5
+
 
 # --- Log & Hasil Output ---
 hasil YOLO/
