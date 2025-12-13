@@ -218,6 +218,7 @@ if uploaded_file is not None:
                 with cols[idx % 3]:
                     st.image(res['img'], width=100)
                     st.caption(f"**{res['disease']}**")
+                    st.caption(f"Skor: {res['final_score']:.3f}")
 
             # Kesimpulan & Simpan
             if results:
@@ -230,6 +231,7 @@ if uploaded_file is not None:
                 - Waktu pemeriksaan: {datetime.now().strftime('%H:%M:%S')}
                 """
                 st.success(f"### ✅ Diagnosa Utama: {best_pred['disease']}")
+                st.info(f"**Skor Keyakinan:** {best_pred['final_score']:.3f} ({best_pred['final_score']*100:.1f}%)")
                 
                 # Simpan ke History
                 st.session_state['history'].append({
