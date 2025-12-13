@@ -48,7 +48,8 @@ SYSTEM_PROMPT = (
 )
 
 # --- SETUP MODEL KLASIFIKASI ---
-MODEL_PATH = 'chikinspect_model_cropped_final.keras'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "chikinspect_model_cropped_final.keras")
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
 # Inisialisasi History
@@ -61,32 +62,21 @@ if 'history' not in st.session_state:
 @st.cache_resource
 def load_classifier_model():
     try:
-        # Jalur utama (keras v3 / strict)
         return tf.keras.models.load_model(
             MODEL_PATH,
             compile=False,
             safe_mode=False
         )
-
     except Exception as e:
-        st.warning("⚠️ Gagal load model via .keras strict loader. Mencoba mode kompatibilitas...")
+        st.error("❌ Gagal load model")
+        st.error(e)
+        return None
 
-        try:
-            # Fallback: loader lama
-            return tf.keras.models.load_model(
-                MODEL_PATH,
-                compile=False
-            )
-
-        except Exception as e2:
-            st.error("❌ Model tidak kompatibel dengan runtime TensorFlow.")
-            st.error(e2)
-            return None
-        
 model = load_classifier_model()
-
 if model is None:
     st.stop()
+
+
 def run_roboflow_detection(image_bytes):
     # Cek API Key Roboflow
     try:
