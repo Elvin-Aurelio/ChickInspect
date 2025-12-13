@@ -167,25 +167,12 @@ def ask_gemini(messages):
             "system_instruction": {"parts": [{"text": system_prompt}]}
         }
 
-        # Coba gunakan gemini-2.5-flash, jika limit bisa ganti ke gemini-1.5-flash
-        # gemini-1.5-flash biasanya lebih murah dan punya quota lebih banyak
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash",
-                contents=contents,
-                config=config
-            )
-        except APIError as e:
-            # Jika gemini-2.5-flash limit, coba fallback ke gemini-1.5-flash
-            if "quota" in str(e).lower() or "limit" in str(e).lower() or "429" in str(e):
-                st.warning("⚠️ gemini-2.5-flash limit, mencoba fallback ke gemini-1.5-flash...")
-                response = client.models.generate_content(
-                    model="gemini-1.5-flash",
-                    contents=contents,
-                    config=config
-                )
-            else:
-                raise
+        # Gunakan gemini-2.5-flash
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=config
+        )
 
         return response.text
     except APIError as e:
