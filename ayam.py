@@ -258,25 +258,36 @@ def build_system_prompt():
     return base
 
 def ask_gemini(messages):
-    client = genai.Client(api_key=GEMINI_API_KEY)
+    try:
+        client = genai.Client(api_key=GEMINI_API_KEY)
 
-    contents = [
-        {"role": "system", "parts": [build_system_prompt()]}
-    ]
+        # Build contents - hanya user dan model/assistant, tanpa system
+        contents = []
+        for m in messages:
+            if m["role"] != "system":
+                # Convert "assistant" role to "model" for Gemini API
+                role = "model" if m["role"] == "assistant" else "user"
+                contents.append({
+                    "role": role,
+                    "parts": [m["content"]]
+                })
 
-    for m in messages:
-        if m["role"] != "system":
-            contents.append({
-                "role": m["role"],
-                "parts": [m["content"]]
-            })
+        # System instruction dikirim via config, bukan contents
+        system_prompt = build_system_prompt()
+        config = {
+            "system_instruction": system_prompt
+        }
 
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=contents
-    )
+        response = client.models.generate_content(
+            model="gemini-2.5-flash",
+            contents=contents,
+            config=config
+        )
 
-    return response.text
+        return response.text
+    except Exception as e:
+        st.error(f"Error saat memanggil Gemini API: {str(e)}")
+        return "Maaf, terjadi kesalahan saat memproses permintaan Anda. Silakan coba lagi."
 
 st.header("💬 Konsultasi dengan Dokter AI")
 st.caption("Diskusikan hasil diagnosa atau tanya tips perawatan ayam...")
