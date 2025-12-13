@@ -5,3 +5,4 @@ numpy
 roboflow
 inference-sdk==0.62.2
 opencv-python-headless
+google-genai
