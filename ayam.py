@@ -21,18 +21,25 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- SETUP GEMINI (CHATBOT) ---
+# --- SETUP GEMINI (CHATBOT) DENGAN CACHE ---
+# Fungsi ini memastikan client tidak putus saat refresh
+@st.cache_resource
+def get_gemini_client(api_key):
+    if not api_key:
+        return None
+    try:
+        return genai.Client(api_key=api_key)
+    except Exception as e:
+        st.error(f"Gagal koneksi Gemini: {e}")
+        return None
+
+# Ambil API Key
 GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-# Jika tidak ada di os.environ, coba cari di st.secrets (opsional)
 if not GEMINI_API_KEY and "GEMINI_API_KEY" in st.secrets:
     GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
 
-client = None
-if GEMINI_API_KEY:
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        st.error(f"Gagal koneksi Gemini: {e}")
+# Inisialisasi Client menggunakan Cache
+client = get_gemini_client(GEMINI_API_KEY)
 
 # Instruksi Dokter AI
 SYSTEM_PROMPT = (
@@ -146,7 +153,7 @@ with st.sidebar:
 st.title("🐔 ChikInspect AI")
 st.markdown("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
 
-# UPLOAD FILE (HANYA SATU KALI DISINI)
+# UPLOAD FILE
 uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
@@ -259,11 +266,23 @@ else:
         with st.chat_message("assistant"):
             with st.spinner("Mengetik..."):
                 try:
+                    # Pastikan sesi ada
                     if "chat_session" in st.session_state:
                         response = st.session_state.chat_session.send_message(prompt)
                         st.markdown(response.text)
                         st.session_state.messages.append({"role": "assistant", "content": response.text})
-                except APIError:
-                    st.error("Koneksi sibuk, coba lagi.")
+                    else:
+                        st.error("Sesi kedaluwarsa. Mohon refresh halaman.")
+                        
                 except Exception as e:
-                    st.error(f"Error: {e}")
+                    # Penanganan Error KHUSUS jika client terputus
+                    error_msg = str(e)
+                    if "closed" in error_msg or "client" in error_msg:
+                        st.warning("♻️ Koneksi ter-reset. Sedang memuat ulang sesi...")
+                        # Hapus sesi yang rusak
+                        if "chat_session" in st.session_state:
+                            del st.session_state.chat_session
+                        # Mulai ulang aplikasi
+                        st.rerun()
+                    else:
+                        st.error(f"Error: {e}")
