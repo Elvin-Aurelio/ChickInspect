@@ -42,7 +42,7 @@ SYSTEM_PROMPT = (
 )
 
 # --- SETUP MODEL KLASIFIKASI ---
-MODEL_PATH = 'chickinspect_model_cropped_final.keras' 
+MODEL_PATH = 'chikinspect_model_cropped_final.keras'
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
 # Inisialisasi History
@@ -58,6 +58,8 @@ def load_classifier_model():
         model = tf.keras.models.load_model(MODEL_PATH)
         return model
     except Exception as e:
+        # Tampilkan error di layar agar tahu kenapa gagal
+        st.error(f"❌ Gagal memuat model klasifikasi: {e}") 
         return None
 
 model = load_classifier_model()
