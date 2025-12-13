@@ -131,13 +131,11 @@ def predict_crop(crop_img, model):
 # --- SIDEBAR HISTORY ---
 with st.sidebar:
     st.title("📂 Riwayat Diagnosa")
-<<<<<<< Updated upstream
-=======
     st.info("⚠️ Data disimpan sementara di browser Anda. Data akan hilang jika halaman di-refresh.")
     st.markdown("Daftar hasil pemeriksaan sesi ini:")
     
     
->>>>>>> Stashed changes
+
     if len(st.session_state['history']) > 0:
         df_hist = pd.DataFrame(st.session_state['history'])
         st.dataframe(df_hist[['Waktu', 'Diagnosa', 'Skor']], hide_index=True)
