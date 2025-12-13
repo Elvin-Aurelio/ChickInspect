@@ -12,6 +12,12 @@ from datetime import datetime
 from google import genai
 from google.genai.errors import APIError
 
+import os
+st.write("📂 **Lokasi Skrip Berjalan:**", os.getcwd())
+st.write("📄 **Daftar File di Folder Ini:**")
+st.write(os.listdir()) # Ini akan mencetak semua nama file ke layar
+# -------------------------------------------------
+
 # ==========================================
 # 1. KONFIGURASI HALAMAN & API KEY
 # ==========================================
