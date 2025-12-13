@@ -12,6 +12,8 @@ from datetime import datetime
 from google import genai
 from google.genai.errors import APIError
 
+import os
+
 # ==========================================
 # 1. KONFIGURASI HALAMAN & API KEY
 # ==========================================
@@ -46,7 +48,7 @@ SYSTEM_PROMPT = (
 )
 
 # --- SETUP MODEL KLASIFIKASI ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.dirname(os.path.abspath(_file_))
 MODEL_PATH = os.path.join(BASE_DIR, "chikinspect_model_cropped_final.keras")
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
@@ -66,18 +68,21 @@ def load_classifier_model():
             safe_mode=False
         )
     except Exception as e:
-        # Jangan stop app jika model gagal load, biar chatbot tetap jalan
-        print(f"Error loading model: {e}")
+        st.error("❌ Gagal load model")
+        st.error(e)
         return None
 
 model = load_classifier_model()
+if model is None:
+    st.stop()
+
 
 def run_roboflow_detection(image_bytes):
     # Cek API Key Roboflow
     try:
         api_key = st.secrets["roboflow_api_key"]
     except:
-        st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
+        st.warning("⚠ Roboflow API Key belum diset di secrets.toml")
         return None
 
     client_rf = InferenceHTTPClient(
@@ -144,15 +149,19 @@ def build_system_prompt():
     return base
 
 def ask_gemini(messages):
+    # Build contents - hanya user dan model/assistant, tanpa system
+    # Format: Content object dengan role dan parts (list of Part objects)
     contents = []
     for m in messages:
         if m["role"] != "system" and m["content"] != "mengetik...":
+            # Convert "assistant" role to "model" for Gemini API
             role = "model" if m["role"] == "assistant" else "user"
             contents.append({
                 "role": role,
                 "parts": [{"text": m["content"]}]
             })
 
+    # System instruction dikirim via config, bukan contents
     system_prompt = build_system_prompt()
     config = {
         "system_instruction": {"parts": [{"text": system_prompt}]}
@@ -166,8 +175,8 @@ def ask_gemini(messages):
         api_keys_to_try.append(("GEMINI_API_KEY_2", GEMINI_API_KEY_2))
 
     if not api_keys_to_try:
-        st.error("⚠️ Tidak ada API Key Gemini yang dikonfigurasi.")
-        return "Maaf, API Key tidak tersedia."
+        st.error("⚠ Tidak ada API Key Gemini yang dikonfigurasi. Harap set GEMINI_API_KEY_1 atau GEMINI_API_KEY_2.")
+        return "Maaf, API Key tidak tersedia. Silakan hubungi administrator."
 
     last_error = None
     for api_key_name, api_key in api_keys_to_try:
@@ -181,25 +190,70 @@ def ask_gemini(messages):
                 config=config
             )
 
-            # if api_key_name != api_keys_to_try[0][0]:
-            #     st.toast(f"Menggunakan {api_key_name} (Backup)", icon="ℹ️")
+            # Jika berhasil, simpan info API key yang digunakan
+            if api_key_name != api_keys_to_try[0][0]:
+                st.success(f"✅ Menggunakan {api_key_name} (API utama sudah habis)")
 
             return response.text
+
+        except APIError as e:
+            error_msg = str(e).lower()
+            last_error = e
+            
+            # Cek apakah error terkait quota/limit
+            if "quota" in error_msg or "limit" in error_msg or "rate limit" in error_msg or "429" in str(e):
+                # Jika masih ada API key lain, coba yang berikutnya
+                if api_key != api_keys_to_try[-1][1]:
+                    st.warning(f"⚠ {api_key_name} quota habis, mencoba API key cadangan...")
+                    continue
+                else:
+                    # Semua API key sudah habis
+                    error_message = (
+                        "⚠ *Semua API Key Quota Terlampaui*\n\n"
+                        "Semua quota API Gemini Anda telah habis. "
+                        "Silakan:\n"
+                        "1. Cek quota di Google AI Studio (https://aistudio.google.com)\n"
+                        "2. Tunggu hingga quota direset (biasanya per hari/per bulan)\n"
+                        "3. Atau upgrade ke paket berbayar jika perlu\n\n"
+                        f"Detail error: {str(e)}"
+                    )
+                    st.error(error_message)
+                    return "Maaf, semua quota API telah habis. Silakan coba lagi nanti atau hubungi administrator."
+            else:
+                # Error selain quota, langsung return
+                st.error(f"Error API Gemini ({api_key_name}): {str(e)}")
+                return f"Maaf, terjadi kesalahan: {str(e)}"
 
         except Exception as e:
             error_msg = str(e).lower()
             last_error = e
             
             # Cek apakah error terkait quota/limit
-            if "quota" in error_msg or "limit" in error_msg or "429" in str(e):
+            if "quota" in error_msg or "limit" in error_msg or "429" in error_msg:
+                # Jika masih ada API key lain, coba yang berikutnya
                 if api_key != api_keys_to_try[-1][1]:
-                    continue # Coba key berikutnya
+                    st.warning(f"⚠ {api_key_name} quota habis, mencoba API key cadangan...")
+                    continue
                 else:
+                    error_message = (
+                        "⚠ *Semua API Key Quota Terlampaui*\n\n"
+                        "Semua quota API Gemini Anda telah habis. "
+                        "Silakan cek quota di Google AI Studio atau tunggu hingga direset.\n\n"
+                        f"Detail: {str(e)}"
+                    )
+                    st.error(error_message)
                     return "Maaf, semua quota API telah habis. Silakan coba lagi nanti."
             else:
+                # Error lain, langsung return
+                st.error(f"Error saat memanggil Gemini API ({api_key_name}): {str(e)}")
                 return f"Maaf, terjadi kesalahan: {str(e)}"
 
-    return f"Maaf, terjadi kesalahan: {str(last_error)}"
+    # Jika semua API key gagal (tidak masuk kategori di atas)
+    if last_error:
+        st.error(f"Error saat memanggil Gemini API: {str(last_error)}")
+        return f"Maaf, terjadi kesalahan: {str(last_error)}"
+    else:
+        return "Maaf, terjadi kesalahan yang tidak diketahui."
 
 # ==========================================
 # 4. SIDEBAR (SHARED)
@@ -207,7 +261,7 @@ def ask_gemini(messages):
 def render_sidebar():
     with st.sidebar:
         st.title("📂 Riwayat Diagnosa")
-        st.info("⚠️ Data disimpan sementara di browser Anda.")
+        st.info("⚠ Data disimpan sementara di browser Anda. Data akan hilang jika halaman di-refresh.")
         st.markdown("Daftar hasil pemeriksaan sesi ini:")
         
         if len(st.session_state['history']) > 0:
@@ -215,11 +269,11 @@ def render_sidebar():
             st.dataframe(df_hist[['Waktu', 'Diagnosa', 'Skor']], hide_index=True)
             csv = df_hist.to_csv(index=False).encode('utf-8')
             st.download_button("📥 Download CSV", csv, "riwayat.csv", "text/csv")
-            if st.button("🗑️ Hapus Riwayat"):
+            if st.button("🗑 Hapus Riwayat"):
                 st.session_state['history'] = []
                 st.rerun()
         else:
-            st.text("Belum ada data.")
+            st.info("Belum ada data.")
 
 # ==========================================
 # 5. HALAMAN DETEKSI PENYAKIT
@@ -228,12 +282,21 @@ def render_detection_page():
     st.title("🐔 ChikInspect AI - Deteksi Penyakit")
     st.markdown("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
     
-    # UPLOAD FILE (Posisi DI ATAS)
+    # Tombol navigasi ke halaman chat
+    if st.button("💬 Ke Halaman Chatbot", use_container_width=True):
+        st.session_state.page = "chat"
+        st.rerun()
+    
+    st.divider()
+
+    # UPLOAD FILE
     uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
 
     # Reset chat dan context ketika file baru di-upload
     if uploaded_file is not None:
+        # Cek apakah ini file baru (berbeda dari sebelumnya)
         if "last_uploaded_file" not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
+            # Reset chat messages dan prediction context
             if "messages" in st.session_state:
                 st.session_state.messages = []
             if "prediction_context" in st.session_state:
@@ -249,7 +312,7 @@ def render_detection_page():
             st.image(original_image, caption="Gambar Asli", use_column_width=True)
 
         # --- BAGIAN DETEKSI ML ---
-        if st.button("🔍 Deteksi Penyakit", type="primary"):
+        if st.button("🔍 Deteksi Penyakit"):
             with st.spinner('Sedang memindai objek feses (Roboflow)...'):
                 raw_resp = run_roboflow_detection(image_bytes)
 
@@ -267,9 +330,11 @@ def render_detection_page():
             valid_predictions = [p for p in predictions if p['confidence'] >= 0.5]
 
             if not valid_predictions:
-                st.warning("⚠️ Tidak ada objek feses yang terdeteksi dengan jelas.")
+                st.warning("⚠ Tidak ada objek feses yang terdeteksi dengan jelas.")
+                # Hapus prediction_context jika tidak ada hasil
                 if "prediction_context" in st.session_state:
                     del st.session_state.prediction_context
+                # Reset chat messages jika tidak ada hasil
                 if "messages" in st.session_state:
                     st.session_state.messages = []
             else:
@@ -278,13 +343,14 @@ def render_detection_page():
                     crop_img = original_image.crop((x-w/2, y-h/2, x+w/2, y+h/2))
                     
                     label, disease_conf = predict_crop(crop_img, model)
-                    final_score = pred['confidence'] * disease_conf
+                    roboflow_conf = pred['confidence']
+                    final_score = roboflow_conf * disease_conf
                     
                     results.append({
                         "id": i+1,
                         "disease": label,
                         "final_score": final_score,
-                        "roboflow_confidence": pred['confidence'],
+                        "roboflow_confidence": roboflow_conf,
                         "disease_confidence": disease_conf,
                         "img": crop_img
                     })
@@ -297,7 +363,9 @@ def render_detection_page():
                 for idx, res in enumerate(results):
                     with cols[idx % 3]:
                         st.image(res['img'], width=100)
-                        st.caption(f"**{res['disease']}**\nScore: {res['final_score']:.2f}")
+                        st.caption(f"{res['disease']}")
+                        st.caption(f"Final Score: {res['final_score']:.3f}")
+                        st.caption(f"Roboflow: {res['roboflow_confidence']:.3f} | Penyakit: {res['disease_confidence']:.3f}")
 
                 # Kesimpulan & Simpan
                 if results:
@@ -312,8 +380,10 @@ def render_detection_page():
                     - Waktu pemeriksaan: {datetime.now().strftime('%H:%M:%S')}
                     """
                     st.success(f"### ✅ Diagnosa Utama: {best_pred['disease']}")
-                    st.info(f"Final Score: {best_pred['final_score']:.3f}")
+                    st.info(f"*Final Score:* {best_pred['final_score']:.3f} ({best_pred['final_score']*100:.1f}%)")
+                    st.info(f"*Detail Skor:* Roboflow Detection = {best_pred['roboflow_confidence']:.3f} ({best_pred['roboflow_confidence']*100:.1f}%) × Disease Classification = {best_pred['disease_confidence']:.3f} ({best_pred['disease_confidence']*100:.1f}%)")
                     
+                    # Simpan ke History
                     st.session_state['history'].append({
                         "Waktu": datetime.now().strftime("%H:%M:%S"),
                         "Nama File": uploaded_file.name,
@@ -321,14 +391,6 @@ def render_detection_page():
                         "Skor": round(best_pred['final_score'], 3)
                     })
                     st.toast("Data tersimpan!", icon="💾")
-    
-    # --- TOMBOL NAVIGASI DI PINDAH KE BAWAH ---
-    st.divider()
-    st.markdown("#### 🩺 Ingin konsultasi lebih lanjut?")
-    st.write("Diskusikan hasil diagnosa di atas dengan Dokter AI.")
-    if st.button("💬 Lanjut ke Chatbot Dokter AI ➡️", use_container_width=True):
-        st.session_state.page = "chat"
-        st.rerun()
 
 # ==========================================
 # 6. HALAMAN CHATBOT
@@ -337,59 +399,72 @@ def render_chat_page():
     st.title("💬 Konsultasi dengan Dokter AI")
     st.caption("Diskusikan hasil diagnosa atau tanya tips perawatan ayam...")
     
-    # Tombol navigasi KEMBALI (Tetap di atas agar mudah kembali)
-    if st.button("⬅️ Kembali ke Deteksi Gambar", use_container_width=True):
+    # Tombol navigasi ke halaman deteksi
+    if st.button("🔍 Ke Halaman Deteksi", use_container_width=True):
         st.session_state.page = "deteksi"
         st.rerun()
     
     st.divider()
 
     if not GEMINI_API_KEY_1 and not GEMINI_API_KEY_2:
-        st.warning("⚠️ Fitur Chatbot belum aktif. Masukkan API Key di Secrets.")
+        st.warning("⚠ Fitur Chatbot belum aktif. Masukkan GEMINI_API_KEY_1 atau GEMINI_API_KEY_2 di Secrets/Environment.")
     else:
         # Inisialisasi messages
         if "messages" not in st.session_state or len(st.session_state.messages) == 0:
+            # Cek apakah ada hasil analisis yang sudah dilakukan
             if "prediction_context" in st.session_state and st.session_state.prediction_context:
                 st.session_state.messages = [
                     {"role": "assistant", "content": "Halo! Saya sudah melihat hasil analisis ayam Anda. Ada yang ingin ditanyakan?"}
                 ]
             else:
                 st.session_state.messages = [
-                    {"role": "assistant", "content": "Halo! Silakan upload gambar di halaman Deteksi terlebih dahulu, atau tanya saya langsung."}
+                    {"role": "assistant", "content": "Halo! Saya adalah Dokter AI untuk kesehatan unggas. Silakan upload dan deteksi gambar feses ayam terlebih dahulu, atau langsung tanyakan apa yang ingin Anda ketahui tentang kesehatan ayam."}
                 ]
 
-        # Cek typing
+        # Cek apakah ada placeholder "mengetik..."
         typing_exists = any(msg["content"] == "mengetik..." for msg in st.session_state.messages)
         
+        # Proses jika ada placeholder "mengetik..." (langsung proses, jangan tunggu input)
         if typing_exists:
+            # Ambil messages tanpa placeholder untuk API
             messages_for_api = [msg for msg in st.session_state.messages if msg["content"] != "mengetik..."]
+            
+            # Proses dengan Gemini
             answer = ask_gemini(messages_for_api)
+            
+            # Hapus placeholder dan tambahkan jawaban sebenarnya
             st.session_state.messages = [msg for msg in st.session_state.messages if msg["content"] != "mengetik..."]
             st.session_state.messages.append({"role": "assistant", "content": answer})
             st.rerun()
 
-        # Tampilkan chat
+        # Tampilkan semua messages (termasuk yang akan diproses)
         for msg in st.session_state.messages:
             with st.chat_message(msg["role"]):
                 if msg["content"] == "mengetik...":
-                    st.markdown("*sedang mengetik...*")
+                    st.markdown("mengetik...")
                 else:
                     st.markdown(msg["content"])
 
-        # Input user
+        # Input dari user
         if prompt := st.chat_input("Tulis pertanyaan Anda..."):
+            # Tambahkan pesan user ke messages
             st.session_state.messages.append({"role": "user", "content": prompt})
+            
+            # Tambahkan placeholder "mengetik..." untuk assistant
             st.session_state.messages.append({"role": "assistant", "content": "mengetik..."})
             st.rerun()
 
 # ==========================================
 # 7. MAIN APP ROUTING
 # ==========================================
+# Inisialisasi page
 if "page" not in st.session_state:
     st.session_state.page = "deteksi"
 
+# Render sidebar (shared)
 render_sidebar()
 
+# Render halaman sesuai state
 if st.session_state.page == "deteksi":
     render_detection_page()
 elif st.session_state.page == "chat":
