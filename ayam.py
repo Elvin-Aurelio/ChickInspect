@@ -24,17 +24,21 @@ st.set_page_config(
 )
 
 # --- SETUP GEMINI (CHATBOT) ---
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-# Jika tidak ada di os.environ, coba cari di st.secrets (opsional)
-if not GEMINI_API_KEY and "GEMINI_API_KEY" in st.secrets:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+# Baca API Key pertama (utama)
+GEMINI_API_KEY_1 = os.environ.get('GEMINI_API_KEY_1')
+if not GEMINI_API_KEY_1 and "GEMINI_API_KEY_1" in st.secrets:
+    GEMINI_API_KEY_1 = st.secrets["GEMINI_API_KEY_1"]
 
-client = None
-if GEMINI_API_KEY:
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
-    except Exception as e:
-        st.error(f"Gagal koneksi Gemini: {e}")
+# Baca API Key kedua (cadangan)
+GEMINI_API_KEY_2 = os.environ.get('GEMINI_API_KEY_2')
+if not GEMINI_API_KEY_2 and "GEMINI_API_KEY_2" in st.secrets:
+    GEMINI_API_KEY_2 = st.secrets["GEMINI_API_KEY_2"]
+
+# Untuk backward compatibility, jika masih pakai GEMINI_API_KEY lama
+if not GEMINI_API_KEY_1:
+    GEMINI_API_KEY_1 = os.environ.get('GEMINI_API_KEY')
+    if not GEMINI_API_KEY_1 and "GEMINI_API_KEY" in st.secrets:
+        GEMINI_API_KEY_1 = st.secrets["GEMINI_API_KEY"]
 
 # Instruksi Dokter AI
 SYSTEM_PROMPT = (
@@ -145,67 +149,111 @@ def build_system_prompt():
     return base
 
 def ask_gemini(messages):
-    try:
-        client = genai.Client(api_key=GEMINI_API_KEY)
+    # Build contents - hanya user dan model/assistant, tanpa system
+    # Format: Content object dengan role dan parts (list of Part objects)
+    contents = []
+    for m in messages:
+        if m["role"] != "system" and m["content"] != "mengetik...":
+            # Convert "assistant" role to "model" for Gemini API
+            role = "model" if m["role"] == "assistant" else "user"
+            contents.append({
+                "role": role,
+                "parts": [{"text": m["content"]}]
+            })
 
-        # Build contents - hanya user dan model/assistant, tanpa system
-        # Format: Content object dengan role dan parts (list of Part objects)
-        contents = []
-        for m in messages:
-            if m["role"] != "system" and m["content"] != "mengetik...":
-                # Convert "assistant" role to "model" for Gemini API
-                role = "model" if m["role"] == "assistant" else "user"
-                contents.append({
-                    "role": role,
-                    "parts": [{"text": m["content"]}]
-                })
+    # System instruction dikirim via config, bukan contents
+    system_prompt = build_system_prompt()
+    config = {
+        "system_instruction": {"parts": [{"text": system_prompt}]}
+    }
 
-        # System instruction dikirim via config, bukan contents
-        # Format bisa string atau Content object dengan parts
-        system_prompt = build_system_prompt()
-        config = {
-            "system_instruction": {"parts": [{"text": system_prompt}]}
-        }
+    # Coba API Key pertama (utama)
+    api_keys_to_try = []
+    if GEMINI_API_KEY_1:
+        api_keys_to_try.append(("GEMINI_API_KEY_1", GEMINI_API_KEY_1))
+    if GEMINI_API_KEY_2:
+        api_keys_to_try.append(("GEMINI_API_KEY_2", GEMINI_API_KEY_2))
 
-        # Gunakan gemini-2.5-flash
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=config
-        )
+    if not api_keys_to_try:
+        st.error("⚠️ Tidak ada API Key Gemini yang dikonfigurasi. Harap set GEMINI_API_KEY_1 atau GEMINI_API_KEY_2.")
+        return "Maaf, API Key tidak tersedia. Silakan hubungi administrator."
 
-        return response.text
-    except APIError as e:
-        error_msg = str(e).lower()
-        # Cek apakah error terkait quota/limit
-        if "quota" in error_msg or "limit" in error_msg or "rate limit" in error_msg or "429" in str(e):
-            error_message = (
-                "⚠️ **API Quota/Limit Terlampaui**\n\n"
-                "Quota API Gemini Anda telah habis atau mencapai limit. "
-                "Silakan:\n"
-                "1. Cek quota Anda di Google AI Studio (https://aistudio.google.com)\n"
-                "2. Tunggu hingga quota direset (biasanya per hari/per bulan)\n"
-                "3. Atau upgrade ke paket berbayar jika perlu\n\n"
-                f"Detail error: {str(e)}"
+    last_error = None
+    for api_key_name, api_key in api_keys_to_try:
+        try:
+            client = genai.Client(api_key=api_key)
+            
+            # Gunakan gemini-2.5-flash
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=config
             )
-            st.error(error_message)
-            return "Maaf, saya tidak bisa menjawab saat ini karena quota API telah habis. Silakan coba lagi nanti atau hubungi administrator."
-        else:
-            st.error(f"Error API Gemini: {str(e)}")
-            return f"Maaf, terjadi kesalahan: {str(e)}"
-    except Exception as e:
-        error_msg = str(e).lower()
-        if "quota" in error_msg or "limit" in error_msg or "429" in error_msg:
-            error_message = (
-                "⚠️ **API Quota/Limit Terlampaui**\n\n"
-                "Quota API Gemini Anda telah habis. "
-                "Silakan cek quota di Google AI Studio atau tunggu hingga direset.\n\n"
-                f"Detail: {str(e)}"
-            )
-            st.error(error_message)
-            return "Maaf, quota API telah habis. Silakan coba lagi nanti."
-        st.error(f"Error saat memanggil Gemini API: {str(e)}")
-        return f"Maaf, terjadi kesalahan: {str(e)}"
+
+            # Jika berhasil, simpan info API key yang digunakan
+            if api_key_name != api_keys_to_try[0][0]:
+                st.success(f"✅ Menggunakan {api_key_name} (API utama sudah habis)")
+
+            return response.text
+
+        except APIError as e:
+            error_msg = str(e).lower()
+            last_error = e
+            
+            # Cek apakah error terkait quota/limit
+            if "quota" in error_msg or "limit" in error_msg or "rate limit" in error_msg or "429" in str(e):
+                # Jika masih ada API key lain, coba yang berikutnya
+                if api_key != api_keys_to_try[-1][1]:
+                    st.warning(f"⚠️ {api_key_name} quota habis, mencoba API key cadangan...")
+                    continue
+                else:
+                    # Semua API key sudah habis
+                    error_message = (
+                        "⚠️ **Semua API Key Quota Terlampaui**\n\n"
+                        "Semua quota API Gemini Anda telah habis. "
+                        "Silakan:\n"
+                        "1. Cek quota di Google AI Studio (https://aistudio.google.com)\n"
+                        "2. Tunggu hingga quota direset (biasanya per hari/per bulan)\n"
+                        "3. Atau upgrade ke paket berbayar jika perlu\n\n"
+                        f"Detail error: {str(e)}"
+                    )
+                    st.error(error_message)
+                    return "Maaf, semua quota API telah habis. Silakan coba lagi nanti atau hubungi administrator."
+            else:
+                # Error selain quota, langsung return
+                st.error(f"Error API Gemini ({api_key_name}): {str(e)}")
+                return f"Maaf, terjadi kesalahan: {str(e)}"
+
+        except Exception as e:
+            error_msg = str(e).lower()
+            last_error = e
+            
+            # Cek apakah error terkait quota/limit
+            if "quota" in error_msg or "limit" in error_msg or "429" in error_msg:
+                # Jika masih ada API key lain, coba yang berikutnya
+                if api_key != api_keys_to_try[-1][1]:
+                    st.warning(f"⚠️ {api_key_name} quota habis, mencoba API key cadangan...")
+                    continue
+                else:
+                    error_message = (
+                        "⚠️ **Semua API Key Quota Terlampaui**\n\n"
+                        "Semua quota API Gemini Anda telah habis. "
+                        "Silakan cek quota di Google AI Studio atau tunggu hingga direset.\n\n"
+                        f"Detail: {str(e)}"
+                    )
+                    st.error(error_message)
+                    return "Maaf, semua quota API telah habis. Silakan coba lagi nanti."
+            else:
+                # Error lain, langsung return
+                st.error(f"Error saat memanggil Gemini API ({api_key_name}): {str(e)}")
+                return f"Maaf, terjadi kesalahan: {str(e)}"
+
+    # Jika semua API key gagal (tidak masuk kategori di atas)
+    if last_error:
+        st.error(f"Error saat memanggil Gemini API: {str(last_error)}")
+        return f"Maaf, terjadi kesalahan: {str(last_error)}"
+    else:
+        return "Maaf, terjadi kesalahan yang tidak diketahui."
 
 # ==========================================
 # 4. SIDEBAR (SHARED)
@@ -358,8 +406,8 @@ def render_chat_page():
     
     st.divider()
 
-    if not GEMINI_API_KEY:
-        st.warning("⚠️ Fitur Chatbot belum aktif. Masukkan GEMINI_API_KEY di Secrets/Environment.")
+    if not GEMINI_API_KEY_1 and not GEMINI_API_KEY_2:
+        st.warning("⚠️ Fitur Chatbot belum aktif. Masukkan GEMINI_API_KEY_1 atau GEMINI_API_KEY_2 di Secrets/Environment.")
     else:
         # Inisialisasi messages
         if "messages" not in st.session_state or len(st.session_state.messages) == 0:
