@@ -142,7 +142,8 @@ def predict_crop(crop_img, model):
 # ==========================================
 # 3. UI UTAMA
 # ==========================================
-
+if "page" not in st.session_state:
+    st.session_state.page = "deteksi"
 # --- SIDEBAR HISTORY ---
 with st.sidebar:
     st.title("📂 Riwayat Diagnosa")
@@ -225,6 +226,13 @@ if uploaded_file is not None:
             # Kesimpulan & Simpan
             if results:
                 best_pred = max(results, key=lambda x: x['final_score'])
+
+                st.session_state.prediction_context = f"""
+                Hasil analisis AI terbaru:
+                - Penyakit terdeteksi: {best_pred['disease']}
+                - Skor keyakinan: {best_pred['final_score']:.2f}
+                - Waktu pemeriksaan: {datetime.now().strftime('%H:%M:%S')}
+                """
                 st.success(f"### ✅ Diagnosa Utama: {best_pred['disease']}")
                 
                 # Simpan ke History
@@ -235,55 +243,64 @@ if uploaded_file is not None:
                     "Skor": round(best_pred['final_score'], 3)
                 })
                 st.toast("Data tersimpan!", icon="💾")
-
+if st.button("💬 Konsultasi dengan Dokter AI"):
+    st.session_state.page = "chat"
+    st.rerun()
 st.markdown("---")
 
 # ==========================================
 # 4. FITUR CHATBOT DOKTER AI (GEMINI)
 # ==========================================
+def build_system_prompt():
+    base = SYSTEM_PROMPT
+    if "prediction_context" in st.session_state:
+        base += "\n\n" + st.session_state.prediction_context
+    return base
+
+def ask_gemini(messages):
+    client = genai.Client(api_key=GEMINI_API_KEY)
+
+    contents = [
+        {"role": "system", "parts": [build_system_prompt()]}
+    ]
+
+    for m in messages:
+        if m["role"] != "system":
+            contents.append({
+                "role": m["role"],
+                "parts": [m["content"]]
+            })
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=contents
+    )
+
+    return response.text
+
 st.header("💬 Konsultasi dengan Dokter AI")
 st.caption("Diskusikan hasil diagnosa atau tanya tips perawatan ayam...")
 
 if not GEMINI_API_KEY:
     st.warning("⚠️ Fitur Chatbot belum aktif. Masukkan GEMINI_API_KEY di Secrets/Environment.")
 else:
-    # Inisialisasi History Chat
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}, 
-            {"role": "assistant", "content": "Halo! Ada yang bisa saya bantu tentang kesehatan ayam?"}
-        ]
+    if st.session_state.page == "chat":
+        st.header("💬 Konsultasi Dokter AI")
 
-    # Inisialisasi Sesi Gemini
-    if "chat_session" not in st.session_state and client:
-        try:
-            st.session_state.chat_session = client.chats.create(
-                model="gemini-2.5-flash",
-                config={"system_instruction": SYSTEM_PROMPT}
-            )
-        except Exception as e:
-            st.error(f"Gagal init chat: {e}")
+        if "messages" not in st.session_state:
+            st.session_state.messages = [
+                {"role": "assistant", "content": "Halo! Saya sudah melihat hasil analisis ayam Anda. Ada yang ingin ditanyakan?"}
+            ]
 
-    # Tampilkan Chat
-    for message in st.session_state.messages:
-        if message["role"] != "system":
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+        for msg in st.session_state.messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
 
-    # Input User
-    if prompt := st.chat_input("Ketik pertanyaan Anda..."):
-        with st.chat_message("user"):
-            st.markdown(prompt)
-        st.session_state.messages.append({"role": "user", "content": prompt})
+        if prompt := st.chat_input("Tulis pertanyaan Anda..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
 
-        with st.chat_message("assistant"):
-            with st.spinner("Mengetik..."):
-                try:
-                    if "chat_session" in st.session_state:
-                        response = st.session_state.chat_session.send_message(prompt)
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
-                except APIError:
-                    st.error("Koneksi sibuk, coba lagi.")
-                except Exception as e:
-                    st.error(f"Error: {e}")
+            with st.spinner("Menganalisis..."):
+                answer = ask_gemini(st.session_state.messages)
+
+            st.session_state.messages.append({"role": "assistant", "content": answer})
+            st.rerun()
