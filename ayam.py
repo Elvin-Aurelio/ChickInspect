@@ -167,16 +167,58 @@ def ask_gemini(messages):
             "system_instruction": {"parts": [{"text": system_prompt}]}
         }
 
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=contents,
-            config=config
-        )
+        # Coba gunakan gemini-2.5-flash, jika limit bisa ganti ke gemini-1.5-flash
+        # gemini-1.5-flash biasanya lebih murah dan punya quota lebih banyak
+        try:
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=config
+            )
+        except APIError as e:
+            # Jika gemini-2.5-flash limit, coba fallback ke gemini-1.5-flash
+            if "quota" in str(e).lower() or "limit" in str(e).lower() or "429" in str(e):
+                st.warning("⚠️ gemini-2.5-flash limit, mencoba fallback ke gemini-1.5-flash...")
+                response = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=contents,
+                    config=config
+                )
+            else:
+                raise
 
         return response.text
+    except APIError as e:
+        error_msg = str(e).lower()
+        # Cek apakah error terkait quota/limit
+        if "quota" in error_msg or "limit" in error_msg or "rate limit" in error_msg or "429" in str(e):
+            error_message = (
+                "⚠️ **API Quota/Limit Terlampaui**\n\n"
+                "Quota API Gemini Anda telah habis atau mencapai limit. "
+                "Silakan:\n"
+                "1. Cek quota Anda di Google AI Studio (https://aistudio.google.com)\n"
+                "2. Tunggu hingga quota direset (biasanya per hari/per bulan)\n"
+                "3. Atau upgrade ke paket berbayar jika perlu\n\n"
+                f"Detail error: {str(e)}"
+            )
+            st.error(error_message)
+            return "Maaf, saya tidak bisa menjawab saat ini karena quota API telah habis. Silakan coba lagi nanti atau hubungi administrator."
+        else:
+            st.error(f"Error API Gemini: {str(e)}")
+            return f"Maaf, terjadi kesalahan: {str(e)}"
     except Exception as e:
+        error_msg = str(e).lower()
+        if "quota" in error_msg or "limit" in error_msg or "429" in error_msg:
+            error_message = (
+                "⚠️ **API Quota/Limit Terlampaui**\n\n"
+                "Quota API Gemini Anda telah habis. "
+                "Silakan cek quota di Google AI Studio atau tunggu hingga direset.\n\n"
+                f"Detail: {str(e)}"
+            )
+            st.error(error_message)
+            return "Maaf, quota API telah habis. Silakan coba lagi nanti."
         st.error(f"Error saat memanggil Gemini API: {str(e)}")
-        return str(e)
+        return f"Maaf, terjadi kesalahan: {str(e)}"
 
 # ==========================================
 # 4. SIDEBAR (SHARED)
