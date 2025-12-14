@@ -49,7 +49,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "chikinspect_model_cropped_final.keras")
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
-# Inisialisasi Session State (Penting agar data tidak hilang saat chat)
+# --- INISIALISASI SESSION STATE ---
 if 'history' not in st.session_state:
     st.session_state['history'] = []
 if 'current_analysis' not in st.session_state:
@@ -142,14 +142,14 @@ def predict_crop(crop_img, model):
 def build_system_prompt():
     base = SYSTEM_PROMPT
     # Ambil konteks dari hasil analisis terakhir yang tersimpan
-    if st.session_state.current_analysis:
+    if st.session_state.current_analysis and "error" not in st.session_state.current_analysis:
         base += f"\n\n[KONTEKS MEDIS SAAT INI]\n{st.session_state.current_analysis['context_str']}"
     return base
 
 def ask_gemini(messages):
     contents = []
     for m in messages:
-        if m["role"] != "system" and m["content"] != "mengetik...":
+        if m["role"] != "system": # Pastikan system prompt tidak masuk sini
             role = "model" if m["role"] == "assistant" else "user"
             contents.append({
                 "role": role,
@@ -204,7 +204,7 @@ def render_sidebar():
             st.caption("Belum ada data.")
 
 # ==========================================
-# 5. HALAMAN UTAMA (GABUNGAN)
+# 5. HALAMAN UTAMA (MAIN APP)
 # ==========================================
 def main():
     render_sidebar()
@@ -216,7 +216,7 @@ def main():
     # --- BAGIAN 1: UPLOAD DAN DETEKSI ---
     uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
 
-    # Reset jika ganti file
+    # Reset state jika user ganti file
     if uploaded_file:
         if "last_uploaded_file" not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
             st.session_state.messages = [] # Reset chat
@@ -234,22 +234,23 @@ def main():
         # Tombol Deteksi
         analyze_clicked = st.button("🔍 Deteksi Penyakit", type="primary", use_container_width=True)
 
-        # Logika Deteksi
+        # Logika Deteksi (Hanya jalan saat tombol diklik)
         if analyze_clicked:
             with st.spinner('Sedang memindai objek feses & menganalisis...'):
                 raw_resp = run_roboflow_detection(image_bytes)
                 predictions = extract_predictions(raw_resp)
                 
-                # Visualisasi
+                # Visualisasi Bounding Box
                 bbox_image = draw_bounding_boxes(original_image, predictions)
                 
-                # Logic Crop & Predict Keras
+                # Logic Crop & Predict Keras (Safety Mode)
                 valid_predictions = [p for p in predictions if p['confidence'] >= 0.5]
                 results = []
                 
                 for i, pred in enumerate(valid_predictions):
                     x, y, w, h = pred['x'], pred['y'], pred['width'], pred['height']
-                    # Crop logic aman
+                    
+                    # Safety Crop: Pastikan koordinat tidak minus atau melebihi gambar
                     left = max(0, x - w/2)
                     top = max(0, y - h/2)
                     right = min(original_image.width, x + w/2)
@@ -266,7 +267,7 @@ def main():
                         "classifier": disease_conf
                     })
 
-                # Simpan hasil ke session_state agar persisten
+                # Simpan hasil ke session_state agar persisten (tidak hilang saat chat)
                 if results:
                     best_pred = max(results, key=lambda x: x['final_score'])
                     
@@ -283,7 +284,7 @@ def main():
                         "context_str": context_str
                     }
                     
-                    # Simpan ke history
+                    # Simpan ke history sidebar
                     st.session_state['history'].append({
                         "Waktu": datetime.now().strftime("%H:%M:%S"),
                         "Nama File": uploaded_file.name,
@@ -301,8 +302,7 @@ def main():
                     st.warning("Tidak ada objek feses yang terdeteksi dengan jelas.")
 
         # --- TAMPILKAN HASIL (PERSISTENT) ---
-        # Bagian ini akan selalu berjalan jika ada data di session_state, 
-        # bahkan setelah user mengetik chat (refresh halaman)
+        # Bagian ini mengambil data dari memori, jadi tetap muncul meski halaman refresh saat chat
         if st.session_state.current_analysis and "error" not in st.session_state.current_analysis:
             data = st.session_state.current_analysis
             
@@ -316,41 +316,29 @@ def main():
     st.divider()
     st.subheader("💬 Konsultasi Dokter AI")
 
-    # Tampilkan chat history
+    # Tampilkan History Chat
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
-            if msg["content"] == "mengetik...":
-                st.write("Sedang mengetik...")
-            else:
-                st.markdown(msg["content"])
+            st.markdown(msg["content"])
 
-    # Input Chat
-    # Jika belum ada file/analisis, disable input atau beri peringatan
+    # Input User
     if st.session_state.current_analysis is None:
         st.caption("ℹ️ Silakan lakukan deteksi gambar di atas untuk mengaktifkan konteks medis Dokter AI.")
 
     if prompt := st.chat_input("Tanya tentang pengobatan, dosis, atau pencegahan..."):
-        # Tambahkan pesan user
+        # 1. Tampilkan pesan user langsung
+        st.chat_message("user").markdown(prompt)
+        # 2. Simpan ke history
         st.session_state.messages.append({"role": "user", "content": prompt})
-        
-        # Tambahkan placeholder loading
-        st.session_state.messages.append({"role": "assistant", "content": "mengetik..."})
-        st.rerun()
 
-    # Proses respons AI (jika pesan terakhir adalah "mengetik...")
-    if st.session_state.messages and st.session_state.messages[-1]["content"] == "mengetik...":
-        # Hapus placeholder
-        st.session_state.messages.pop()
-        
-        # Kirim ke Gemini
+        # 3. Proses AI dengan indikator spinner (Visual saja, tidak disimpan ke list pesan)
         with st.chat_message("assistant"):
             with st.spinner("Dokter AI sedang berpikir..."):
                 response_text = ask_gemini(st.session_state.messages)
                 st.markdown(response_text)
         
-        # Simpan respons ke history
+        # 4. Simpan jawaban AI ke history
         st.session_state.messages.append({"role": "assistant", "content": response_text})
-
 
 if __name__ == "__main__":
     main()
