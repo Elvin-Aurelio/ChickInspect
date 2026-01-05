@@ -95,7 +95,7 @@ ChikInspect/
 
 ## Dataset
 
-- **Source:** Poultry Pathology Visual Dataset (Kaggle)
+- **Source:** Tanzanian Fecal Image Dataset (Zenodo)
 - **Data Type:** JPEG images of chicken feces
 - **Classes:**
   - Coccidiosis
@@ -107,13 +107,10 @@ ChikInspect/
 
 | Set        | Number of Images |
 |-----------|------------------|
-| Training  | 5,592 |
-| Validation| 1,399 |
-| Testing   | 1,076 |
+| Training  | 5,761 |
+| Validation| 1,246 |
+| Testing   | 1,255 |
 
-### Notes
-- Only original images were used.
-- Augmented images were excluded due to unrealistic visual artifacts that degraded model performance.
 
 ---
 
