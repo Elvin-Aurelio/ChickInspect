@@ -1,5 +1,8 @@
 # ChikInspect – AI-Based Poultry Disease Detection & Consultation System
 
+[![Streamlit App](https://img.shields.io/badge/Live%20Demo-Streamlit-red?logo=streamlit)](https://chickinspect-25p28p2ip34udpm8cwffmm.streamlit.app/)
+
+
 ### AI-powered fecal image analysis for early poultry disease detection, enhanced with object detection and AI-assisted veterinary consultation.
 
 ---
@@ -83,7 +86,6 @@ ChikInspect/
 ├── chikinspect_model_cropped_final.keras # Trained CNN classifier
 ├── requirements.txt                     # Python dependencies
 ├── packages.txt                         # Additional environment packages
-├── notebook.ipynb                       # (Optional) Training & evaluation notebook
 └── .streamlit/
 └── secrets.toml                     # API keys configuration
 
@@ -219,6 +221,13 @@ http://localhost:8501
 
 ---
 
+## Live Demo
+
+The application is publicly available via Streamlit Cloud:
+
+🔗 https://chickinspect-25p28p2ip34udpm8cwffmm.streamlit.app/
+
+
 ## Example Output
 
 ```
@@ -282,4 +291,4 @@ Data Science Student | Applied Machine Learning
 
 
 ---
-
+This project is provided for research and educational purposes only and is not intended as a substitute for professional veterinary diagnosis.
