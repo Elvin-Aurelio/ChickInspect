@@ -190,23 +190,20 @@ def render_sidebar():
 # ==========================================
 def main():
     def extract_predictions(resp):
-    # Validasi tipe data ketat: hentikan jika bukan dictionary
-    if not isinstance(resp, dict):
+        # Validasi tipe data ketat: hentikan jika bukan dictionary
+        if not isinstance(resp, dict):
+            return []
+            # Skenario 1: Format respons standar dari model reguler
+        if "predictions" in resp:
+            return resp.get("predictions", [])
+        # Skenario 2: Format respons baru dari Workflows
+        if "outputs" in resp and isinstance(resp["outputs"], list):
+            try:
+                # Ekstraksi matriks dari hierarki JSON terdalam
+                return resp["outputs"][0].get("predictions", [])
+            except (IndexError, AttributeError):
+                pass
         return []
-        
-    # Skenario 1: Format respons standar dari model reguler
-    if "predictions" in resp:
-        return resp.get("predictions", [])
-        
-    # Skenario 2: Format respons baru dari Workflows
-    if "outputs" in resp and isinstance(resp["outputs"], list):
-        try:
-            # Ekstraksi matriks dari hierarki JSON terdalam
-            return resp["outputs"][0].get("predictions", [])
-        except (IndexError, AttributeError):
-            pass
-            
-    return []
 
     render_sidebar()
     
