@@ -79,40 +79,69 @@ if model is None:
 
 def run_roboflow_detection(image_bytes):
     try:
-        api_key = st.secrets["roboflow_api_key"]
-    except:
-        st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
-        return None
+        # Gunakan get untuk menghindari error jika key tidak ada
+        api_key = st.secrets.get("roboflow_api_key")
+        if not api_key:
+            st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
+            return None
 
-    client_rf = InferenceHTTPClient(
-        api_url="https://serverless.roboflow.com",
-        api_key=api_key
-    )
-    
-    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+        client_rf = InferenceHTTPClient(
+            api_url="https://serverless.roboflow.com",
+            api_key=api_key
+        )
+        
+        img_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-    try:
+        # Eksekusi Workflow
         resp = client_rf.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
             images={"image": img_b64}
         )
-        if isinstance(resp, list): resp = resp[0]
+
+        # --- PENANGANAN ERROR 'LIST' OBJECT ---
+        # Jika resp adalah list [ {...} ], kita ambil isinya
+        if isinstance(resp, list):
+            if len(resp) > 0:
+                resp = resp[0]
+            else:
+                return None
+        
+        # Jika resp adalah string (kadang terjadi pada beberapa environment)
         if isinstance(resp, str):
             resp = json.loads(resp)
+            
         return resp
+        
     except Exception as e:
-        st.error(f"Error Roboflow: {e}")
+        # Menangkap error spesifik atribut 'items' yang sering muncul di internal SDK
+        if "'list' object has no attribute 'items'" in str(e):
+            st.error("❌ Roboflow SDK Error: Respons API berupa 'list' tapi SDK mengharapkan 'dict'.")
+            st.info("Cobalah bungkus input image ke dalam list: images=[{'image': img_b64}]")
+        else:
+            st.error(f"Error Roboflow: {e}")
         return None
 
 def extract_predictions(resp):
+    """
+    Fungsi ekstraksi yang lebih tangguh untuk berbagai format output Roboflow
+    """
     if resp is None: return []
-    if "predictions" in resp and isinstance(resp["predictions"], dict):
-        preds = resp["predictions"].get("predictions", [])
-        if isinstance(preds, list): return preds
-    if "predictions" in resp and isinstance(resp["predictions"], list):
-        return resp["predictions"]
+    
+    # Jalur 1: Standard Workflow Output
+    # Biasanya struktur: {'predictions': {'predictions': [ ... ]}}
+    if isinstance(resp, dict):
+        # Cek kunci 'predictions'
+        preds_node = resp.get("predictions", [])
+        
+        if isinstance(preds_node, dict):
+            return preds_node.get("predictions", [])
+        
+        if isinstance(preds_node, list):
+            return preds_node
+            
     return []
+
 
 def draw_bounding_boxes(image, preds):
     img = image.copy()
