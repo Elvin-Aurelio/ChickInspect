@@ -79,12 +79,7 @@ if model is None:
 
 def run_roboflow_detection(image_bytes):
     try:
-        # Gunakan get untuk menghindari error jika key tidak ada
         api_key = st.secrets.get("roboflow_api_key")
-        if not api_key:
-            st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
-            return None
-
         client_rf = InferenceHTTPClient(
             api_url="https://serverless.roboflow.com",
             api_key=api_key
@@ -92,35 +87,25 @@ def run_roboflow_detection(image_bytes):
         
         img_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
-        # Eksekusi Workflow
+        # PERUBAHAN DISINI: Masukkan ke dalam list [ ... ]
+        # Ini seringkali memaksa SDK mengembalikan struktur yang konsisten
         resp = client_rf.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": img_b64}
+            images=[{"image": img_b64}] 
         )
 
-        # --- PENANGANAN ERROR 'LIST' OBJECT ---
-        # Jika resp adalah list [ {...} ], kita ambil isinya
+        # Jika masih list, bongkar manual
         if isinstance(resp, list):
-            if len(resp) > 0:
-                resp = resp[0]
-            else:
-                return None
-        
-        # Jika resp adalah string (kadang terjadi pada beberapa environment)
-        if isinstance(resp, str):
-            resp = json.loads(resp)
+            resp = resp[0]
             
         return resp
         
     except Exception as e:
-        # Menangkap error spesifik atribut 'items' yang sering muncul di internal SDK
-        if "'list' object has no attribute 'items'" in str(e):
-            st.error("❌ Roboflow SDK Error: Respons API berupa 'list' tapi SDK mengharapkan 'dict'.")
-            st.info("Cobalah bungkus input image ke dalam list: images=[{'image': img_b64}]")
-        else:
-            st.error(f"Error Roboflow: {e}")
+        # Jika cara di atas masih gagal karena internal SDK, gunakan cara manual (Raw Request)
+        st.error(f"Gagal menggunakan SDK: {e}")
         return None
+
 
 def extract_predictions(resp):
     """
