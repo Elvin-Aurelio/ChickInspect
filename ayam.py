@@ -77,20 +77,20 @@ model = load_classifier_model()
 if model is None:
     st.stop()
 
+
 def run_roboflow_detection(image_bytes):
     try:
         api_key = st.secrets["roboflow_api_key"]
-    except:
-        st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
+    except KeyError:
+        st.warning("⚠️ Kredensial API tidak ditemukan di konfigurasi.")
         return None
 
-    # Encode gambar ke base64 string
     img_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-    # URL Endpoint API langsung ke Roboflow Workflows
-    url = f"https://serverless.roboflow.com/v1/workspaces/elvin-3wtt1/workflows/find-feses-3?api_key={api_key}"
     
-    # Struktur JSON sesuai protokol Roboflow API
+    # Rute standar dan stabil untuk Roboflow API
+    url = "https://detect.roboflow.com/v1/workspaces/elvin-3wtt1/workflows/find-feses-3"
+    
+    params = {"api_key": api_key}
     payload = {
         "inputs": {
             "image": {
@@ -99,24 +99,16 @@ def run_roboflow_detection(image_bytes):
             }
         }
     }
-    
     headers = {"Content-Type": "application/json"}
 
     try:
-        # Eksekusi HTTP POST
-        response = requests.post(url, json=payload, headers=headers)
-        response.raise_for_status() # Lemparkan error jika status bukan 200 OK
-        
-        resp = response.json()
-        
-        # Penyesuaian format output agar kompatibel dengan sisa kode Anda
-        if isinstance(resp, list): 
-            resp = resp[0]
-        return resp
-        
+        response = requests.post(url, params=params, json=payload, headers=headers)
+        response.raise_for_status() 
+        return response.json()
     except requests.exceptions.RequestException as e:
-        st.error(f"Gagal menghubungi server Roboflow: {e}")
+        st.error(f"Interupsi komunikasi API: Cek kembali Endpoint atau API Key Anda. Detail log: {e}")
         return None
+
 
 # ==========================================
 # 3. FUNGSI-FUNGSI CHATBOT
