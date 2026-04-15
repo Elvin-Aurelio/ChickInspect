@@ -7,6 +7,8 @@ from PIL import Image, ImageDraw
 from inference_sdk import InferenceHTTPClient
 import io
 from datetime import datetime
+import base64
+import json
 
 # Import Library Gemini
 from google import genai
@@ -21,26 +23,24 @@ st.set_page_config(
     layout="wide"
 )
 
-# --- SETUP GEMINI (CHATBOT) DENGAN CACHE ---
-@st.cache_resource
-def get_gemini_client(api_key):
-    if not api_key:
-        return None
-    try:
-        return genai.Client(api_key=api_key)
-    except Exception as e:
-        st.error(f"Gagal koneksi Gemini: {e}")
-        return None
+# --- SETUP GEMINI (CHATBOT) ---
+GEMINI_API_KEY_1 = os.environ.get('GEMINI_API_KEY_1')
+if not GEMINI_API_KEY_1 and "GEMINI_API_KEY_1" in st.secrets:
+    GEMINI_API_KEY_1 = st.secrets["GEMINI_API_KEY_1"]
 
-# Konfigurasi API Keys
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or st.secrets.get("GEMINI_API_KEY")
-ROBOFLOW_API_KEY = os.environ.get('ROBOFLOW_API_KEY') or st.secrets.get("roboflow_api_key")
+GEMINI_API_KEY_2 = os.environ.get('GEMINI_API_KEY_2')
+if not GEMINI_API_KEY_2 and "GEMINI_API_KEY_2" in st.secrets:
+    GEMINI_API_KEY_2 = st.secrets["GEMINI_API_KEY_2"]
 
-client = get_gemini_client(GEMINI_API_KEY)
+if not GEMINI_API_KEY_1:
+    GEMINI_API_KEY_1 = os.environ.get('GEMINI_API_KEY')
+    if not GEMINI_API_KEY_1 and "GEMINI_API_KEY" in st.secrets:
+        GEMINI_API_KEY_1 = st.secrets["GEMINI_API_KEY"]
 
+# Instruksi Dokter AI
 SYSTEM_PROMPT = (
     "Anda adalah Dokter AI ahli kesehatan unggas. "
-    "Analisis gejala, berikan saran obat (misal: Amprolium untuk Koksidiosis), dan pencegahan. "
+    "Analisis gejala berdasarkan konteks yang diberikan, berikan saran obat (misal: Amprolium untuk Koksidiosis), dan pencegahan. "
     "Jawab singkat, padat, dan profesional dalam Bahasa Indonesia."
 )
 
@@ -49,77 +49,69 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 MODEL_PATH = os.path.join(BASE_DIR, "chikinspect_model_cropped_final.keras")
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
-# Inisialisasi History
+# --- INISIALISASI SESSION STATE ---
 if 'history' not in st.session_state:
     st.session_state['history'] = []
+if 'current_analysis' not in st.session_state:
+    st.session_state['current_analysis'] = None # Menyimpan hasil deteksi aktif
+if 'messages' not in st.session_state:
+    st.session_state['messages'] = []
 
 # ==========================================
 # 2. FUNGSI-FUNGSI LOGIKA (ML & ROBOFLOW)
 # ==========================================
 @st.cache_resource
 def load_classifier_model():
-    if not os.path.exists(MODEL_PATH):
-        st.error(f"File model {MODEL_PATH} tidak ditemukan!")
-        return None
     try:
-        return tf.keras.models.load_model(MODEL_PATH)
+        return tf.keras.models.load_model(
+            MODEL_PATH,
+            compile=False,
+            safe_mode=False
+        )
     except Exception as e:
-        st.error(f"Gagal memuat model Keras: {e}")
+        st.error("❌ Gagal load model")
+        st.error(e)
         return None
 
 model = load_classifier_model()
+if model is None:
+    st.stop()
 
-def run_roboflow_detection(pil_image):
-    if not ROBOFLOW_API_key:
-        st.warning("⚠️ Roboflow API Key belum dikonfigurasi.")
+def run_roboflow_detection(image_bytes):
+    try:
+        api_key = st.secrets["roboflow_api_key"]
+    except:
+        st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
         return None
 
     client_rf = InferenceHTTPClient(
         api_url="https://serverless.roboflow.com",
-        api_key=ROBOFLOW_API_KEY
+        api_key=api_key
     )
     
+    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
     try:
-        # Gunakan parameter 'images' dengan format list jika workflow mengharapkan batch
-        # atau tetap dict jika itu single input.
         resp = client_rf.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": pil_image}
+            images={"image": img_b64}
         )
-        
-        # --- LOGIKA DEFENSIF UNTUK MENGATASI ERROR 'LIST' ---
-        # Jika resp adalah list, ambil elemen pertama
-        if isinstance(resp, list):
-            if len(resp) > 0:
-                resp = resp[0]
-            else:
-                return None
-        
-        # Jika setelah diekstrak masih bukan dict, kita tidak bisa lanjut
-        if not isinstance(resp, dict):
-            st.error(f"Format respons tidak dikenal: {type(resp)}")
-            return None
-            
+        if isinstance(resp, list): resp = resp[0]
+        if isinstance(resp, str):
+            resp = json.loads(resp)
         return resp
-        
     except Exception as e:
-        # Jika error 'items' muncul di dalam library, kita tangkap di sini
-        if "'list' object has no attribute 'items'" in str(e):
-            st.error("SDK Roboflow mengalami konflik tipe data. Coba update library: pip install -U inference-sdk")
-        else:
-            st.error(f"Error Roboflow Workflow: {e}")
+        st.error(f"Error Roboflow: {e}")
         return None
 
 def extract_predictions(resp):
-    if not resp: return []
-    # Jalur 1: Hasil dari Workflow API biasanya ada di kunci 'predictions'
-    if "predictions" in resp:
-        content = resp["predictions"]
-        if isinstance(content, dict) and "predictions" in content:
-            return content["predictions"]
-        if isinstance(content, list):
-            return content
+    if resp is None: return []
+    if "predictions" in resp and isinstance(resp["predictions"], dict):
+        preds = resp["predictions"].get("predictions", [])
+        if isinstance(preds, list): return preds
+    if "predictions" in resp and isinstance(resp["predictions"], list):
+        return resp["predictions"]
     return []
 
 def draw_bounding_boxes(image, preds):
@@ -128,145 +120,225 @@ def draw_bounding_boxes(image, preds):
     for p in preds:
         try:
             x, y, w, h = p["x"], p["y"], p["width"], p["height"]
-            # Konversi koordinat tengah ke pojok untuk PIL
-            left, top = x - w/2, y - h/2
-            right, bottom = x + w/2, y + h/2
-            draw.rectangle([left, top, right, bottom], outline="red", width=3)
+            draw.rectangle([x-w/2, y-h/2, x+w/2, y+h/2], outline="red", width=3)
             label = p.get("class", "obj")
             conf = p.get("confidence", 0)
-            draw.text((left, top - 10), f"{label} ({conf:.2f})", fill="red")
+            draw.text((x-w/2, y-h/2 - 10), f"{label} ({conf:.2f})", fill="red")
         except: continue
     return img
 
 def predict_crop(crop_img, model):
     if model is None: return "Unknown", 0.0
-    # Preprocessing sesuai input model (asumsi 224x224 RGB)
     img = crop_img.resize((224, 224))
-    img_array = np.array(img).astype('float32') / 255.0  # Normalisasi jika diperlukan
-    img_array = np.expand_dims(img_array, axis=0)
-    
-    predictions = model.predict(img_array, verbose=0)
+    img_array = np.expand_dims(np.array(img), axis=0)
+    predictions = model.predict(img_array)
     class_idx = np.argmax(predictions[0])
     confidence = np.max(predictions[0])
     return CLASS_NAMES[class_idx], confidence
 
 # ==========================================
-# 3. UI UTAMA STREAMLIT
+# 3. FUNGSI-FUNGSI CHATBOT
 # ==========================================
+def build_system_prompt():
+    base = SYSTEM_PROMPT
+    # Ambil konteks dari hasil analisis terakhir yang tersimpan
+    if st.session_state.current_analysis and "error" not in st.session_state.current_analysis:
+        base += f"\n\n[KONTEKS MEDIS SAAT INI]\n{st.session_state.current_analysis['context_str']}"
+    return base
 
-with st.sidebar:
-    st.title("📂 Riwayat Diagnosa")
-    if st.session_state['history']:
-        df_hist = pd.DataFrame(st.session_state['history'])
-        st.dataframe(df_hist[['Waktu', 'Diagnosa', 'Skor']], hide_index=True)
-        csv = df_hist.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "riwayat_chikinspect.csv", "text/csv")
-        if st.button("🗑️ Hapus Semua Riwayat"):
-            st.session_state['history'] = []
-            st.rerun()
-    else:
-        st.info("Belum ada diagnosa tersimpan.")
+def ask_gemini(messages):
+    contents = []
+    for m in messages:
+        if m["role"] != "system": # Pastikan system prompt tidak masuk sini
+            role = "model" if m["role"] == "assistant" else "user"
+            contents.append({
+                "role": role,
+                "parts": [{"text": m["content"]}]
+            })
 
-st.title("🐔 ChikInspect AI")
-st.write("Analisis kesehatan feses ayam berbasis Computer Vision dan LLM.")
+    system_prompt = build_system_prompt()
+    config = {
+        "system_instruction": {"parts": [{"text": system_prompt}]}
+    }
 
-uploaded_file = st.file_uploader("Upload Foto Feses Ayam", type=["jpg", "jpeg", "png"])
+    api_keys_to_try = []
+    if GEMINI_API_KEY_1: api_keys_to_try.append(("GEMINI_API_KEY_1", GEMINI_API_KEY_1))
+    if GEMINI_API_KEY_2: api_keys_to_try.append(("GEMINI_API_KEY_2", GEMINI_API_KEY_2))
 
-if uploaded_file:
-    # Simpan di memory agar bisa digunakan berkali-kali tanpa upload ulang
-    image_bytes = uploaded_file.read()
-    original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+    if not api_keys_to_try:
+        return "Maaf, API Key Gemini tidak tersedia."
+
+    last_error = None
+    for api_key_name, api_key in api_keys_to_try:
+        try:
+            client = genai.Client(api_key=api_key)
+            response = client.models.generate_content(
+                model="gemini-2.5-flash",
+                contents=contents,
+                config=config
+            )
+            return response.text
+        except Exception as e:
+            last_error = e
+            continue
     
-    col1, col2 = st.columns(2)
-    with col1:
-        st.image(original_image, caption="Gambar Input", use_container_width=True)
+    return f"Maaf, terjadi kesalahan atau kuota habis: {str(last_error)}"
 
-    if st.button("🔍 Jalankan Deteksi & Klasifikasi", type="primary"):
-        with st.spinner('Menjalankan Object Detection (Roboflow)...'):
-            # Gunakan objek PIL langsung ke fungsi yang sudah diperbaiki
-            raw_resp = run_roboflow_detection(original_image)
-
-        predictions = extract_predictions(raw_resp)
+# ==========================================
+# 4. SIDEBAR
+# ==========================================
+def render_sidebar():
+    with st.sidebar:
+        st.title("📂 Riwayat Diagnosa")
+        st.info("Data hilang jika di-refresh.")
         
-        if not predictions:
-            st.warning("Tidak ditemukan objek feses. Coba foto yang lebih jelas atau dekat.")
+        if len(st.session_state['history']) > 0:
+            df_hist = pd.DataFrame(st.session_state['history'])
+            st.dataframe(df_hist[['Waktu', 'Diagnosa', 'Skor']], hide_index=True)
+            csv = df_hist.to_csv(index=False).encode('utf-8')
+            st.download_button("📥 Download CSV", csv, "riwayat.csv", "text/csv")
+            if st.button("🗑️ Hapus Riwayat"):
+                st.session_state['history'] = []
+                st.rerun()
         else:
-            bbox_image = draw_bounding_boxes(original_image, predictions)
+            st.caption("Belum ada data.")
+
+# ==========================================
+# 5. HALAMAN UTAMA (MAIN APP)
+# ==========================================
+def main():
+    render_sidebar()
+    
+    st.title("🐔 ChikInspect AI - Deteksi & Konsultasi")
+    st.markdown("Upload foto feses ayam untuk deteksi penyakit, lalu konsultasikan hasilnya dengan Dokter AI di bawah.")
+    st.divider()
+
+    # --- BAGIAN 1: UPLOAD DAN DETEKSI ---
+    uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
+
+    # Reset state jika user ganti file
+    if uploaded_file:
+        if "last_uploaded_file" not in st.session_state or st.session_state.last_uploaded_file != uploaded_file.name:
+            st.session_state.messages = [] # Reset chat
+            st.session_state.current_analysis = None # Reset hasil diagnosa
+            st.session_state.last_uploaded_file = uploaded_file.name
+
+    if uploaded_file is not None:
+        image_bytes = uploaded_file.getvalue()
+        original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        
+        col1, col2 = st.columns(2)
+        with col1:
+            st.image(original_image, caption="Gambar Asli", use_column_width=True)
+
+        # Tombol Deteksi
+        analyze_clicked = st.button("🔍 Deteksi Penyakit", type="primary", use_container_width=True)
+
+        # Logika Deteksi (Hanya jalan saat tombol diklik)
+        if analyze_clicked:
+            with st.spinner('Sedang memindai objek feses & menganalisis...'):
+                raw_resp = run_roboflow_detection(image_bytes)
+                predictions = extract_predictions(raw_resp)
+                
+                # Visualisasi Bounding Box
+                bbox_image = draw_bounding_boxes(original_image, predictions)
+                
+                # Logic Crop & Predict Keras (Safety Mode)
+                valid_predictions = [p for p in predictions if p['confidence'] >= 0.5]
+                results = []
+                
+                for i, pred in enumerate(valid_predictions):
+                    x, y, w, h = pred['x'], pred['y'], pred['width'], pred['height']
+                    
+                    # Safety Crop: Pastikan koordinat tidak minus atau melebihi gambar
+                    left = max(0, x - w/2)
+                    top = max(0, y - h/2)
+                    right = min(original_image.width, x + w/2)
+                    bottom = min(original_image.height, y + h/2)
+                    
+                    crop_img = original_image.crop((left, top, right, bottom))
+                    label, disease_conf = predict_crop(crop_img, model)
+                    final_score = pred['confidence'] * disease_conf
+                    
+                    results.append({
+                        "disease": label,
+                        "final_score": final_score,
+                        "roboflow": pred['confidence'],
+                        "classifier": disease_conf
+                    })
+
+                # Simpan hasil ke session_state agar persisten (tidak hilang saat chat)
+                if results:
+                    best_pred = max(results, key=lambda x: x['final_score'])
+                    
+                    context_str = f"""
+                    Hasil analisis AI terbaru:
+                    - Penyakit terdeteksi: {best_pred['disease']}
+                    - Tingkat Keparahan/Skor: {best_pred['final_score']:.3f}
+                    - Waktu: {datetime.now().strftime('%H:%M:%S')}
+                    """
+                    
+                    st.session_state.current_analysis = {
+                        "bbox_image": bbox_image,
+                        "best_result": best_pred,
+                        "context_str": context_str
+                    }
+                    
+                    # Simpan ke history sidebar
+                    st.session_state['history'].append({
+                        "Waktu": datetime.now().strftime("%H:%M:%S"),
+                        "Nama File": uploaded_file.name,
+                        "Diagnosa": best_pred['disease'],
+                        "Skor": round(best_pred['final_score'], 3)
+                    })
+                    
+                    # Tambahkan pesan pembuka chat otomatis
+                    st.session_state.messages = [{
+                        "role": "assistant", 
+                        "content": f"**Analisis Selesai.**\nSaya mendeteksi indikasi **{best_pred['disease']}** dengan skor keyakinan {best_pred['final_score']:.2f}. Ada yang ingin Anda tanyakan mengenai penanganan penyakit ini?"
+                    }]
+                else:
+                    st.session_state.current_analysis = {"error": "Tidak ada objek terdeteksi."}
+                    st.warning("Tidak ada objek feses yang terdeteksi dengan jelas.")
+
+        # --- TAMPILKAN HASIL (PERSISTENT) ---
+        # Bagian ini mengambil data dari memori, jadi tetap muncul meski halaman refresh saat chat
+        if st.session_state.current_analysis and "error" not in st.session_state.current_analysis:
+            data = st.session_state.current_analysis
+            
             with col2:
-                st.image(bbox_image, caption=f"Hasil Deteksi: {len(predictions)} objek", use_container_width=True)
-
-            st.divider()
-            st.subheader("🔬 Hasil Analisis Per Objek")
+                st.image(data["bbox_image"], caption="Hasil Deteksi", use_column_width=True)
             
-            results = []
-            valid_preds = [p for p in predictions if p.get('confidence', 0) >= 0.4]
-            
-            # Looping hasil deteksi untuk diklasifikasikan model Keras
-            cols = st.columns(min(len(valid_preds), 4))
-            for i, pred in enumerate(valid_preds):
-                x, y, w, h = pred['x'], pred['y'], pred['width'], pred['height']
-                # Crop area feses
-                left, top = max(0, x - w/2), max(0, y - h/2)
-                right, bottom = min(original_image.width, x + w/2), min(original_image.height, y + h/2)
-                crop_img = original_image.crop((left, top, right, bottom))
-                
-                label, disease_conf = predict_crop(crop_img, model)
-                final_score = pred['confidence'] * disease_conf
-                
-                results.append({
-                    "disease": label,
-                    "score": final_score
-                })
+            st.success(f"### ✅ Diagnosa Utama: {data['best_result']['disease']}")
+            st.progress(float(data['best_result']['final_score']))
 
-                with cols[i % 4]:
-                    st.image(crop_img, caption=f"{label} ({final_score:.2f})")
+    # --- BAGIAN 2: CHATBOT (DI BAWAH HASIL) ---
+    st.divider()
+    st.subheader("💬 Konsultasi Dokter AI")
 
-            # Kesimpulan Akhir
-            if results:
-                best_pred = max(results, key=lambda x: x['score'])
-                st.success(f"### Diagnosa Utama: **{best_pred['disease']}**")
-                
-                st.session_state['history'].append({
-                    "Waktu": datetime.now().strftime("%Y-%m-%d %H:%M"),
-                    "Diagnosa": best_pred['disease'],
-                    "Skor": round(best_pred['score'], 3)
-                })
-
-st.markdown("---")
-
-# ==========================================
-# 4. CHATBOT DOKTER AI (GEMINI)
-# ==========================================
-st.header("💬 Konsultasi Dokter Hewan AI")
-
-if not GEMINI_API_KEY:
-    st.info("Masukkan API Key Gemini untuk mengaktifkan fitur konsultasi.")
-else:
-    if "messages" not in st.session_state:
-        st.session_state.messages = [
-            {"role": "assistant", "content": "Halo! Saya adalah Dokter AI ChikInspect. Berdasarkan hasil deteksi di atas, apa yang ingin Anda tanyakan?"}
-        ]
-
-    # Persistent Chat Session
-    if "chat_session" not in st.session_state and client:
-        st.session_state.chat_session = client.chats.create(
-            model="gemini-2.0-flash", # Pastikan model name sesuai yang tersedia
-            config={"system_instruction": SYSTEM_PROMPT}
-        )
-
+    # Tampilkan History Chat
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
 
-    if prompt := st.chat_input("Tanyakan tentang gejala atau pengobatan..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        with st.chat_message("user"):
-            st.markdown(prompt)
+    # Input User
+    if st.session_state.current_analysis is None:
+        st.caption("ℹ️ Silakan lakukan deteksi gambar di atas untuk mengaktifkan konteks medis Dokter AI.")
 
+    if prompt := st.chat_input("Tanya tentang pengobatan, dosis, atau pencegahan..."):
+        # 1. Tampilkan pesan user langsung
+        st.chat_message("user").markdown(prompt)
+        # 2. Simpan ke history
+        st.session_state.messages.append({"role": "user", "content": prompt})
+
+        # 3. Proses AI dengan indikator spinner (Visual saja, tidak disimpan ke list pesan)
         with st.chat_message("assistant"):
-            try:
-                response = st.session_state.chat_session.send_message(prompt)
-                st.markdown(response.text)
-                st.session_state.messages.append({"role": "assistant", "content": response.text})
-            except Exception as e:
-                st.error(f"Gemini Error: {e}")
+            with st.spinner("Dokter AI sedang berpikir..."):
+                response_text = ask_gemini(st.session_state.messages)
+                st.markdown(response_text)
+        
+        # 4. Simpan jawaban AI ke history
+        st.session_state.messages.append({"role": "assistant", "content": response_text})
+
+if __name__ == "__main__":
+    main()
