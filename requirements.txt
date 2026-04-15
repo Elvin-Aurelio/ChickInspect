@@ -3,6 +3,6 @@ tensorflow
 pillow
 numpy
 roboflow
-inference-sdk==0.62.2
+inference-sdk
 opencv-python-headless
 google-genai
