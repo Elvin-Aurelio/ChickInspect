@@ -45,7 +45,8 @@ SYSTEM_PROMPT = (
 )
 
 # --- SETUP MODEL KLASIFIKASI ---
-MODEL_PATH = 'chickinspect_model_cropped_final.keras' 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+MODEL_PATH = os.path.join(BASE_DIR, "chikinspect_model_cropped_final.keras")
 CLASS_NAMES = ['Coccidiosis', 'Healthy', 'New Castle Disease', 'Salmonella']
 
 # Inisialisasi History
