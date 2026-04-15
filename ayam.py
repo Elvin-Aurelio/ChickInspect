@@ -69,12 +69,7 @@ def load_classifier_model():
 model = load_classifier_model()
 
 def run_roboflow_detection(pil_image):
-    """
-    Fungsi ini diperbaiki untuk menerima objek PIL secara langsung.
-    Ini menghindari error 'list' object has no attribute 'items' yang 
-    disebabkan oleh encoding base64 manual yang tidak kompatibel.
-    """
-    if not ROBOFLOW_API_KEY:
+    if not ROBOFLOW_API_key:
         st.warning("⚠️ Roboflow API Key belum dikonfigurasi.")
         return None
 
@@ -84,20 +79,35 @@ def run_roboflow_detection(pil_image):
     )
     
     try:
-        # Menyerahkan objek PIL ke SDK secara langsung jauh lebih aman
+        # Gunakan parameter 'images' dengan format list jika workflow mengharapkan batch
+        # atau tetap dict jika itu single input.
         resp = client_rf.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
             images={"image": pil_image}
         )
         
-        # Penanganan jika respons dibungkus dalam list
-        if isinstance(resp, list) and len(resp) > 0:
-            resp = resp[0]
+        # --- LOGIKA DEFENSIF UNTUK MENGATASI ERROR 'LIST' ---
+        # Jika resp adalah list, ambil elemen pertama
+        if isinstance(resp, list):
+            if len(resp) > 0:
+                resp = resp[0]
+            else:
+                return None
+        
+        # Jika setelah diekstrak masih bukan dict, kita tidak bisa lanjut
+        if not isinstance(resp, dict):
+            st.error(f"Format respons tidak dikenal: {type(resp)}")
+            return None
             
         return resp
+        
     except Exception as e:
-        st.error(f"Error Roboflow Workflow: {e}")
+        # Jika error 'items' muncul di dalam library, kita tangkap di sini
+        if "'list' object has no attribute 'items'" in str(e):
+            st.error("SDK Roboflow mengalami konflik tipe data. Coba update library: pip install -U inference-sdk")
+        else:
+            st.error(f"Error Roboflow Workflow: {e}")
         return None
 
 def extract_predictions(resp):
