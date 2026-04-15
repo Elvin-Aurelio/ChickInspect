@@ -4,7 +4,7 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 from PIL import Image, ImageDraw
-from inference_sdk import InferenceHTTPClient
+import requests
 import io
 from datetime import datetime
 import base64
@@ -84,57 +84,39 @@ def run_roboflow_detection(image_bytes):
         st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
         return None
 
-    client_rf = InferenceHTTPClient(
-        api_url="https://serverless.roboflow.com",
-        api_key=api_key
-    )
-    
+    # Encode gambar ke base64 string
     img_b64 = base64.b64encode(image_bytes).decode("utf-8")
 
+    # URL Endpoint API langsung ke Roboflow Workflows
+    url = f"https://serverless.roboflow.com/v1/workspaces/elvin-3wtt1/workflows/find-feses-3?api_key={api_key}"
+    
+    # Struktur JSON sesuai protokol Roboflow API
+    payload = {
+        "inputs": {
+            "image": {
+                "type": "base64",
+                "value": img_b64
+            }
+        }
+    }
+    
+    headers = {"Content-Type": "application/json"}
+
     try:
-        resp = client_rf.run_workflow(
-            workspace_name="elvin-3wtt1",
-            workflow_id="find-feses-3",
-            images={"image": img_b64}
-        )
-        if isinstance(resp, list): resp = resp[0]
-        if isinstance(resp, str):
-            resp = json.loads(resp)
+        # Eksekusi HTTP POST
+        response = requests.post(url, json=payload, headers=headers)
+        response.raise_for_status() # Lemparkan error jika status bukan 200 OK
+        
+        resp = response.json()
+        
+        # Penyesuaian format output agar kompatibel dengan sisa kode Anda
+        if isinstance(resp, list): 
+            resp = resp[0]
         return resp
-    except Exception as e:
-        st.error(f"Error Roboflow: {e}")
+        
+    except requests.exceptions.RequestException as e:
+        st.error(f"Gagal menghubungi server Roboflow: {e}")
         return None
-
-def extract_predictions(resp):
-    if resp is None: return []
-    if "predictions" in resp and isinstance(resp["predictions"], dict):
-        preds = resp["predictions"].get("predictions", [])
-        if isinstance(preds, list): return preds
-    if "predictions" in resp and isinstance(resp["predictions"], list):
-        return resp["predictions"]
-    return []
-
-def draw_bounding_boxes(image, preds):
-    img = image.copy()
-    draw = ImageDraw.Draw(img)
-    for p in preds:
-        try:
-            x, y, w, h = p["x"], p["y"], p["width"], p["height"]
-            draw.rectangle([x-w/2, y-h/2, x+w/2, y+h/2], outline="red", width=3)
-            label = p.get("class", "obj")
-            conf = p.get("confidence", 0)
-            draw.text((x-w/2, y-h/2 - 10), f"{label} ({conf:.2f})", fill="red")
-        except: continue
-    return img
-
-def predict_crop(crop_img, model):
-    if model is None: return "Unknown", 0.0
-    img = crop_img.resize((224, 224))
-    img_array = np.expand_dims(np.array(img), axis=0)
-    predictions = model.predict(img_array)
-    class_idx = np.argmax(predictions[0])
-    confidence = np.max(predictions[0])
-    return CLASS_NAMES[class_idx], confidence
 
 # ==========================================
 # 3. FUNGSI-FUNGSI CHATBOT
