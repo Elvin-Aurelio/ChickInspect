@@ -9,7 +9,7 @@ import io
 from datetime import datetime
 import base64
 import json
-
+import requests
 # Import Library Gemini
 from google import genai
 from google.genai.errors import APIError
@@ -77,55 +77,63 @@ model = load_classifier_model()
 if model is None:
     st.stop()
 
+
 def run_roboflow_detection(image_bytes):
     try:
         api_key = st.secrets.get("roboflow_api_key")
-        client_rf = InferenceHTTPClient(
-            api_url="https://serverless.roboflow.com",
-            api_key=api_key
-        )
+        if not api_key:
+            st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
+            return None
+
+        # Format URL Workflow API (Ganti sesuai workspace/id Anda jika berbeda)
+        # Note: Kita menggunakan endpoint /infer/workflows
+        url = f"https://detect.roboflow.com/workflow/elvin-3wtt1/find-feses-3"
         
         img_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
-        # PERUBAHAN DISINI: Masukkan ke dalam list [ ... ]
-        # Ini seringkali memaksa SDK mengembalikan struktur yang konsisten
-        resp = client_rf.run_workflow(
-            workspace_name="elvin-3wtt1",
-            workflow_id="find-feses-3",
-            images=[{"image": img_b64}] 
-        )
-
-        # Jika masih list, bongkar manual
-        if isinstance(resp, list):
-            resp = resp[0]
-            
-        return resp
         
-    except Exception as e:
-        # Jika cara di atas masih gagal karena internal SDK, gunakan cara manual (Raw Request)
-        st.error(f"Gagal menggunakan SDK: {e}")
-        return None
+        # Struktur Payload resmi untuk Roboflow Workflow API
+        payload = {
+            "api_key": api_key,
+            "inputs": {
+                "image": {"type": "base64", "value": img_b64}
+            }
+        }
+        
+        # Kirim request POST manual
+        response = requests.post(url, json=payload, timeout=30)
+        
+        # Jika sukses (Status 200)
+        if response.status_code == 200:
+            result = response.json()
+            
+            # Struktur Workflow API biasanya: {'outputs': [{'predictions': [...]}]}
+            if "outputs" in result and isinstance(result["outputs"], list):
+                return result["outputs"][0]
+            return result
+        else:
+            st.error(f"API Error ({response.status_code}): {response.text}")
+            return None
 
+    except Exception as e:
+        st.error(f"Gagal melakukan request manual: {e}")
+        return None
 
 def extract_predictions(resp):
     """
-    Fungsi ekstraksi yang lebih tangguh untuk berbagai format output Roboflow
+    Ekstraksi hasil dari JSON mentah API Workflow
     """
     if resp is None: return []
     
-    # Jalur 1: Standard Workflow Output
-    # Biasanya struktur: {'predictions': {'predictions': [ ... ]}}
-    if isinstance(resp, dict):
-        # Cek kunci 'predictions'
-        preds_node = resp.get("predictions", [])
-        
-        if isinstance(preds_node, dict):
-            return preds_node.get("predictions", [])
-        
-        if isinstance(preds_node, list):
-            return preds_node
+    # Workflow biasanya membungkus hasil di dalam key yang sesuai nama step-nya
+    # Namun cara paling aman adalah mencari list di dalam dictionary tersebut
+    for key, value in resp.items():
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and "predictions" in value:
+            return value["predictions"]
             
     return []
+
 
 
 def draw_bounding_boxes(image, preds):
