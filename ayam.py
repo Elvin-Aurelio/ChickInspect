@@ -22,7 +22,6 @@ st.set_page_config(
 )
 
 # --- SETUP GEMINI (CHATBOT) DENGAN CACHE ---
-# Fungsi ini memastikan client tidak putus saat refresh
 @st.cache_resource
 def get_gemini_client(api_key):
     if not api_key:
@@ -33,15 +32,12 @@ def get_gemini_client(api_key):
         st.error(f"Gagal koneksi Gemini: {e}")
         return None
 
-# Ambil API Key
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY')
-if not GEMINI_API_KEY and "GEMINI_API_KEY" in st.secrets:
-    GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+# Konfigurasi API Keys
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY') or st.secrets.get("GEMINI_API_KEY")
+ROBOFLOW_API_KEY = os.environ.get('ROBOFLOW_API_KEY') or st.secrets.get("roboflow_api_key")
 
-# Inisialisasi Client menggunakan Cache
 client = get_gemini_client(GEMINI_API_KEY)
 
-# Instruksi Dokter AI
 SYSTEM_PROMPT = (
     "Anda adalah Dokter AI ahli kesehatan unggas. "
     "Analisis gejala, berikan saran obat (misal: Amprolium untuk Koksidiosis), dan pencegahan. "
@@ -61,52 +57,58 @@ if 'history' not in st.session_state:
 # ==========================================
 @st.cache_resource
 def load_classifier_model():
+    if not os.path.exists(MODEL_PATH):
+        st.error(f"File model {MODEL_PATH} tidak ditemukan!")
+        return None
     try:
-        model = tf.keras.models.load_model(MODEL_PATH)
-        return model
+        return tf.keras.models.load_model(MODEL_PATH)
     except Exception as e:
+        st.error(f"Gagal memuat model Keras: {e}")
         return None
 
 model = load_classifier_model()
 
-def run_roboflow_detection(image_bytes):
-    # Cek API Key Roboflow
-    try:
-        api_key = st.secrets["roboflow_api_key"]
-    except:
-        st.warning("⚠️ Roboflow API Key belum diset di secrets.toml")
+def run_roboflow_detection(pil_image):
+    """
+    Fungsi ini diperbaiki untuk menerima objek PIL secara langsung.
+    Ini menghindari error 'list' object has no attribute 'items' yang 
+    disebabkan oleh encoding base64 manual yang tidak kompatibel.
+    """
+    if not ROBOFLOW_API_KEY:
+        st.warning("⚠️ Roboflow API Key belum dikonfigurasi.")
         return None
 
     client_rf = InferenceHTTPClient(
         api_url="https://serverless.roboflow.com",
-        api_key=api_key
+        api_key=ROBOFLOW_API_KEY
     )
     
-    import base64
-    img_b64 = base64.b64encode(image_bytes).decode("utf-8")
-
     try:
+        # Menyerahkan objek PIL ke SDK secara langsung jauh lebih aman
         resp = client_rf.run_workflow(
             workspace_name="elvin-3wtt1",
             workflow_id="find-feses-3",
-            images={"image": img_b64}
+            images={"image": pil_image}
         )
-        if isinstance(resp, list): resp = resp[0]
-        if isinstance(resp, str):
-            import json
-            resp = json.loads(resp)
+        
+        # Penanganan jika respons dibungkus dalam list
+        if isinstance(resp, list) and len(resp) > 0:
+            resp = resp[0]
+            
         return resp
     except Exception as e:
-        st.error(f"Error Roboflow: {e}")
+        st.error(f"Error Roboflow Workflow: {e}")
         return None
 
 def extract_predictions(resp):
-    if resp is None: return []
-    if "predictions" in resp and isinstance(resp["predictions"], dict):
-        preds = resp["predictions"].get("predictions", [])
-        if isinstance(preds, list): return preds
-    if "predictions" in resp and isinstance(resp["predictions"], list):
-        return resp["predictions"]
+    if not resp: return []
+    # Jalur 1: Hasil dari Workflow API biasanya ada di kunci 'predictions'
+    if "predictions" in resp:
+        content = resp["predictions"]
+        if isinstance(content, dict) and "predictions" in content:
+            return content["predictions"]
+        if isinstance(content, list):
+            return content
     return []
 
 def draw_bounding_boxes(image, preds):
@@ -115,174 +117,145 @@ def draw_bounding_boxes(image, preds):
     for p in preds:
         try:
             x, y, w, h = p["x"], p["y"], p["width"], p["height"]
-            draw.rectangle([x-w/2, y-h/2, x+w/2, y+h/2], outline="red", width=3)
+            # Konversi koordinat tengah ke pojok untuk PIL
+            left, top = x - w/2, y - h/2
+            right, bottom = x + w/2, y + h/2
+            draw.rectangle([left, top, right, bottom], outline="red", width=3)
             label = p.get("class", "obj")
             conf = p.get("confidence", 0)
-            draw.text((x-w/2, y-h/2 - 10), f"{label} ({conf:.2f})", fill="red")
+            draw.text((left, top - 10), f"{label} ({conf:.2f})", fill="red")
         except: continue
     return img
 
 def predict_crop(crop_img, model):
     if model is None: return "Unknown", 0.0
+    # Preprocessing sesuai input model (asumsi 224x224 RGB)
     img = crop_img.resize((224, 224))
-    img_array = np.expand_dims(np.array(img), axis=0)
-    predictions = model.predict(img_array)
+    img_array = np.array(img).astype('float32') / 255.0  # Normalisasi jika diperlukan
+    img_array = np.expand_dims(img_array, axis=0)
+    
+    predictions = model.predict(img_array, verbose=0)
     class_idx = np.argmax(predictions[0])
     confidence = np.max(predictions[0])
     return CLASS_NAMES[class_idx], confidence
 
 # ==========================================
-# 3. UI UTAMA
+# 3. UI UTAMA STREAMLIT
 # ==========================================
 
-# --- SIDEBAR HISTORY ---
 with st.sidebar:
     st.title("📂 Riwayat Diagnosa")
-    if len(st.session_state['history']) > 0:
+    if st.session_state['history']:
         df_hist = pd.DataFrame(st.session_state['history'])
         st.dataframe(df_hist[['Waktu', 'Diagnosa', 'Skor']], hide_index=True)
         csv = df_hist.to_csv(index=False).encode('utf-8')
-        st.download_button("📥 Download CSV", csv, "riwayat.csv", "text/csv")
-        if st.button("🗑️ Hapus Riwayat"):
+        st.download_button("📥 Download CSV", csv, "riwayat_chikinspect.csv", "text/csv")
+        if st.button("🗑️ Hapus Semua Riwayat"):
             st.session_state['history'] = []
             st.rerun()
     else:
-        st.info("Belum ada data.")
+        st.info("Belum ada diagnosa tersimpan.")
 
-# --- MAIN CONTENT ---
 st.title("🐔 ChikInspect AI")
-st.markdown("Upload foto feses ayam untuk mendeteksi penyakit secara otomatis.")
+st.write("Analisis kesehatan feses ayam berbasis Computer Vision dan LLM.")
 
-# UPLOAD FILE
-uploaded_file = st.file_uploader("Pilih gambar...", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("Upload Foto Feses Ayam", type=["jpg", "jpeg", "png"])
 
-if uploaded_file is not None:
-    image_bytes = uploaded_file.getvalue()
+if uploaded_file:
+    # Simpan di memory agar bisa digunakan berkali-kali tanpa upload ulang
+    image_bytes = uploaded_file.read()
     original_image = Image.open(io.BytesIO(image_bytes)).convert("RGB")
     
     col1, col2 = st.columns(2)
     with col1:
-        st.image(original_image, caption="Gambar Asli", use_column_width=True)
+        st.image(original_image, caption="Gambar Input", use_container_width=True)
 
-    # --- BAGIAN DETEKSI ML ---
-    if st.button("🔍 Deteksi Penyakit"):
-        with st.spinner('Sedang memindai objek feses (Roboflow)...'):
-            raw_resp = run_roboflow_detection(image_bytes)
+    if st.button("🔍 Jalankan Deteksi & Klasifikasi", type="primary"):
+        with st.spinner('Menjalankan Object Detection (Roboflow)...'):
+            # Gunakan objek PIL langsung ke fungsi yang sudah diperbaiki
+            raw_resp = run_roboflow_detection(original_image)
 
         predictions = extract_predictions(raw_resp)
-        bbox_image = draw_bounding_boxes(original_image, predictions)
-
-        with col2:
-            st.image(bbox_image, caption=f"Terdeteksi {len(predictions)} Objek", use_column_width=True)
-
-        st.divider()
-        st.subheader("🔬 Hasil Analisis Laboratorium AI")
-            
-        results = []
-        progress_bar = st.progress(0)
-        valid_predictions = [p for p in predictions if p['confidence'] >= 0.5]
-
-        if not valid_predictions:
-            st.warning("⚠️ Tidak ada objek feses yang terdeteksi dengan jelas.")
+        
+        if not predictions:
+            st.warning("Tidak ditemukan objek feses. Coba foto yang lebih jelas atau dekat.")
         else:
-            for i, pred in enumerate(valid_predictions):
+            bbox_image = draw_bounding_boxes(original_image, predictions)
+            with col2:
+                st.image(bbox_image, caption=f"Hasil Deteksi: {len(predictions)} objek", use_container_width=True)
+
+            st.divider()
+            st.subheader("🔬 Hasil Analisis Per Objek")
+            
+            results = []
+            valid_preds = [p for p in predictions if p.get('confidence', 0) >= 0.4]
+            
+            # Looping hasil deteksi untuk diklasifikasikan model Keras
+            cols = st.columns(min(len(valid_preds), 4))
+            for i, pred in enumerate(valid_preds):
                 x, y, w, h = pred['x'], pred['y'], pred['width'], pred['height']
-                crop_img = original_image.crop((x-w/2, y-h/2, x+w/2, y+h/2))
+                # Crop area feses
+                left, top = max(0, x - w/2), max(0, y - h/2)
+                right, bottom = min(original_image.width, x + w/2), min(original_image.height, y + h/2)
+                crop_img = original_image.crop((left, top, right, bottom))
                 
                 label, disease_conf = predict_crop(crop_img, model)
                 final_score = pred['confidence'] * disease_conf
                 
                 results.append({
-                    "id": i+1,
                     "disease": label,
-                    "final_score": final_score,
-                    "img": crop_img
+                    "score": final_score
                 })
-                progress_bar.progress((i + 1) / len(valid_predictions))
-            
-            progress_bar.empty()
 
-            # Tampilkan Hasil Gambar Kecil
-            cols = st.columns(min(len(results), 3))
-            for idx, res in enumerate(results):
-                with cols[idx % 3]:
-                    st.image(res['img'], width=100)
-                    st.caption(f"**{res['disease']}**")
+                with cols[i % 4]:
+                    st.image(crop_img, caption=f"{label} ({final_score:.2f})")
 
-            # Kesimpulan & Simpan
+            # Kesimpulan Akhir
             if results:
-                best_pred = max(results, key=lambda x: x['final_score'])
-                st.success(f"### ✅ Diagnosa Utama: {best_pred['disease']}")
+                best_pred = max(results, key=lambda x: x['score'])
+                st.success(f"### Diagnosa Utama: **{best_pred['disease']}**")
                 
-                # Simpan ke History
                 st.session_state['history'].append({
-                    "Waktu": datetime.now().strftime("%H:%M:%S"),
-                    "Nama File": uploaded_file.name,
+                    "Waktu": datetime.now().strftime("%Y-%m-%d %H:%M"),
                     "Diagnosa": best_pred['disease'],
-                    "Skor": round(best_pred['final_score'], 3)
+                    "Skor": round(best_pred['score'], 3)
                 })
-                st.toast("Data tersimpan!", icon="💾")
 
 st.markdown("---")
 
 # ==========================================
-# 4. FITUR CHATBOT DOKTER AI (GEMINI)
+# 4. CHATBOT DOKTER AI (GEMINI)
 # ==========================================
-st.header("💬 Konsultasi dengan Dokter AI")
-st.caption("Diskusikan hasil diagnosa atau tanya tips perawatan ayam...")
+st.header("💬 Konsultasi Dokter Hewan AI")
 
 if not GEMINI_API_KEY:
-    st.warning("⚠️ Fitur Chatbot belum aktif. Masukkan GEMINI_API_KEY di Secrets/Environment.")
+    st.info("Masukkan API Key Gemini untuk mengaktifkan fitur konsultasi.")
 else:
-    # Inisialisasi History Chat
     if "messages" not in st.session_state:
         st.session_state.messages = [
-            {"role": "system", "content": SYSTEM_PROMPT}, 
-            {"role": "assistant", "content": "Halo! Ada yang bisa saya bantu tentang kesehatan ayam?"}
+            {"role": "assistant", "content": "Halo! Saya adalah Dokter AI ChikInspect. Berdasarkan hasil deteksi di atas, apa yang ingin Anda tanyakan?"}
         ]
 
-    # Inisialisasi Sesi Gemini
+    # Persistent Chat Session
     if "chat_session" not in st.session_state and client:
-        try:
-            st.session_state.chat_session = client.chats.create(
-                model="gemini-2.5-flash",
-                config={"system_instruction": SYSTEM_PROMPT}
-            )
-        except Exception as e:
-            st.error(f"Gagal init chat: {e}")
+        st.session_state.chat_session = client.chats.create(
+            model="gemini-2.0-flash", # Pastikan model name sesuai yang tersedia
+            config={"system_instruction": SYSTEM_PROMPT}
+        )
 
-    # Tampilkan Chat
-    for message in st.session_state.messages:
-        if message["role"] != "system":
-            with st.chat_message(message["role"]):
-                st.markdown(message["content"])
+    for msg in st.session_state.messages:
+        with st.chat_message(msg["role"]):
+            st.markdown(msg["content"])
 
-    # Input User
-    if prompt := st.chat_input("Ketik pertanyaan Anda..."):
+    if prompt := st.chat_input("Tanyakan tentang gejala atau pengobatan..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
         with st.chat_message("user"):
             st.markdown(prompt)
-        st.session_state.messages.append({"role": "user", "content": prompt})
 
         with st.chat_message("assistant"):
-            with st.spinner("Mengetik..."):
-                try:
-                    # Pastikan sesi ada
-                    if "chat_session" in st.session_state:
-                        response = st.session_state.chat_session.send_message(prompt)
-                        st.markdown(response.text)
-                        st.session_state.messages.append({"role": "assistant", "content": response.text})
-                    else:
-                        st.error("Sesi kedaluwarsa. Mohon refresh halaman.")
-                        
-                except Exception as e:
-                    # Penanganan Error KHUSUS jika client terputus
-                    error_msg = str(e)
-                    if "closed" in error_msg or "client" in error_msg:
-                        st.warning("♻️ Koneksi ter-reset. Sedang memuat ulang sesi...")
-                        # Hapus sesi yang rusak
-                        if "chat_session" in st.session_state:
-                            del st.session_state.chat_session
-                        # Mulai ulang aplikasi
-                        st.rerun()
-                    else:
-                        st.error(f"Error: {e}")
+            try:
+                response = st.session_state.chat_session.send_message(prompt)
+                st.markdown(response.text)
+                st.session_state.messages.append({"role": "assistant", "content": response.text})
+            except Exception as e:
+                st.error(f"Gemini Error: {e}")
