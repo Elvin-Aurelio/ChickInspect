@@ -78,20 +78,23 @@ if model is None:
     st.stop()
 
 
+
 def run_roboflow_detection(image_bytes):
     try:
         api_key = st.secrets["roboflow_api_key"]
     except KeyError:
-        st.warning("⚠️ Kredensial API tidak ditemukan di konfigurasi.")
+        st.warning("Peringatan: Roboflow API Key belum dikonfigurasi di secrets.toml")
         return None
 
+    # Encode representasi bit gambar ke format string base64
     img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+
+    # URL Endpoint presisi untuk memanggil Roboflow Workflows
+    url = "https://detect.roboflow.com/infer/workflows/elvin-3wtt1/find-feses-3"
     
-    # Rute standar dan stabil untuk Roboflow API
-    url = "https://detect.roboflow.com/v1/workspaces/elvin-3wtt1/workflows/find-feses-3"
-    
-    params = {"api_key": api_key}
+    # Skema JSON hierarkis yang diwajibkan oleh protokol Workflows
     payload = {
+        "api_key": api_key,
         "inputs": {
             "image": {
                 "type": "base64",
@@ -99,16 +102,24 @@ def run_roboflow_detection(image_bytes):
             }
         }
     }
+    
     headers = {"Content-Type": "application/json"}
 
     try:
-        response = requests.post(url, params=params, json=payload, headers=headers)
+        # Eksekusi permintaan HTTP metode POST ke server
+        response = requests.post(url, json=payload, headers=headers)
         response.raise_for_status() 
-        return response.json()
+        
+        # Konversi respons biner kembali ke kamus (dictionary) Python
+        resp = response.json()
+        return resp
+        
     except requests.exceptions.RequestException as e:
-        st.error(f"Interupsi komunikasi API: Cek kembali Endpoint atau API Key Anda. Detail log: {e}")
+        # Intersepsi error jika terjadi anomali protokol HTTP (seperti 400, 401, atau 500)
+        st.error(f"Kegagalan sinkronisasi dengan server Roboflow: {e}")
+        if getattr(e, 'response', None) is not None:
+            st.error(f"Detail Log Diagnostik Server: {e.response.text}")
         return None
-
 
 # ==========================================
 # 3. FUNGSI-FUNGSI CHATBOT
