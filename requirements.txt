@@ -1,8 +1,8 @@
+opencv-python-headless
 streamlit
 tensorflow-cpu
 pillow
 numpy
 roboflow
 inference-sdk
-opencv-python-headless
 google-genai
