@@ -1,8 +1,8 @@
-streamlit
-tensorflow
-pillow
-numpy
-roboflow
+streamlit==1.50.0
+tensorflow==2.20.0
+pillow==11.3.0
+numpy==2.3.4
+roboflow==1.2.11
 inference-sdk==0.62.2
-google-genai
-opencv-python-headless==4.8.0.76
+google-genai==1.55.0
+opencv-python-headless==4.10.0.84
