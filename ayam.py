@@ -229,7 +229,7 @@ def main():
         
         col1, col2 = st.columns(2)
         with col1:
-            st.image(original_image, caption="Gambar Asli", use_column_width=True)
+            st.image(original_image, caption="Gambar Asli", use_container_width=True)
 
         # Tombol Deteksi
         analyze_clicked = st.button("🔍 Deteksi Penyakit", type="primary", use_container_width=True)
@@ -307,7 +307,7 @@ def main():
             data = st.session_state.current_analysis
             
             with col2:
-                st.image(data["bbox_image"], caption="Hasil Deteksi", use_column_width=True)
+                st.image(data["bbox_image"], caption="Hasil Deteksi", use_container_width=True)
             
             st.success(f"### ✅ Diagnosa Utama: {data['best_result']['disease']}")
             st.progress(float(data['best_result']['final_score']))
